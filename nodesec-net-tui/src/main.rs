@@ -1,8 +1,10 @@
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind, MouseEventKind, MouseButton},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     execute,
+    event::EnableMouseCapture,
+    event::DisableMouseCapture,
 };
 use ratatui::{
     backend::CrosstermBackend,
@@ -17,7 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
 use nodesec_core::{
-    models::{NetworkConnection, Platform},
+    models::{NetworkConnection, NetworkProtocol, Platform},
     network::{linux::LinuxNetworkMonitor, macos::MacOSNetworkMonitor, windows::WindowsNetworkMonitor, common::NetworkMonitor},
 };
 
@@ -170,7 +172,20 @@ impl App {
             
             // Handle incoming connections
             while let Ok(conn) = self.rx.try_recv() {
-                self.add_connection(conn).await;
+                // Check for scan error marker
+                if conn.process_name.starts_with("SCAN_ERROR:") {
+                    let mut alerts = self.alerts_arc.lock().await;
+                    alerts.insert(0, format!(
+                        "[{}] Scan Error: {}",
+                        chrono::Local::now().format("%H:%M:%S"),
+                        conn.process_name.strip_prefix("SCAN_ERROR: ").unwrap_or(&conn.process_name)
+                    ));
+                    if alerts.len() > 100 {
+                        alerts.truncate(100);
+                    }
+                } else {
+                    self.add_connection(conn).await;
+                }
             }
             
             // Handle events
@@ -622,11 +637,16 @@ impl App {
 
 pub async fn run_net_tui(_interface: Option<String>, interval: u64) -> Result<()> {
     enable_raw_mode()?;
-    execute!(stdout(), EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
+    execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
 
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
-    
+
+    // Enable SGR 1006 mouse mode for better coordinate reporting
+    print!("\x1b[?1006h");
+    use std::io::Write;
+    std::io::stdout().flush()?;
+
     // Create network monitor
     let platform = Platform::detect();
     let monitor: Box<dyn NetworkMonitor> = match platform {
@@ -635,17 +655,17 @@ pub async fn run_net_tui(_interface: Option<String>, interval: u64) -> Result<()
         Platform::Windows => Box::new(WindowsNetworkMonitor::new()),
         Platform::Unknown => Box::new(LinuxNetworkMonitor::new()),
     };
-    
+
     // Wrap monitor in Arc<Mutex> for sharing with scan task
     let monitor = Arc::new(Mutex::new(monitor));
-    
+
     // Start monitoring
     let (tx, rx) = mpsc::channel(1000);
     {
         let mut m = monitor.lock().await;
         let _ = m.start().await;
     }
-    
+
     // Spawn monitoring task
     let monitor_clone = monitor.clone();
     let tx_clone = tx.clone();
@@ -653,21 +673,36 @@ pub async fn run_net_tui(_interface: Option<String>, interval: u64) -> Result<()
         let mut interval_timer = tokio::time::interval(Duration::from_secs(interval));
         loop {
             interval_timer.tick().await;
-            
+
             // Scan for new connections
             {
                 let mut m = monitor_clone.lock().await;
                 if let Err(e) = m.scan_once().await {
-                    eprintln!("Scan error: {}", e);
+                    // Send error to UI instead of printing to stderr
+                    let _ = tx_clone.send(NetworkConnection {
+                        timestamp: 0,
+                        pid: 0,
+                        src_ip: "0.0.0.0".parse().unwrap(),
+                        dst_ip: "0.0.0.0".parse().unwrap(),
+                        src_port: 0,
+                        dst_port: 0,
+                        protocol: NetworkProtocol::Tcp,
+                        process_name: format!("SCAN_ERROR: {}", e),
+                        process_path: None,
+                        command_line: None,
+                        user: None,
+                        threat_score: 0,
+                        is_suspicious: false,
+                    }).await;
                 }
             }
-            
+
             // Drain events and send to TUI
             let events = {
                 let m = monitor_clone.lock().await;
                 m.drain_events().await
             };
-            
+
             for event in events {
                 if tx_clone.send(event).await.is_err() {
                     break; // Channel closed
@@ -675,21 +710,27 @@ pub async fn run_net_tui(_interface: Option<String>, interval: u64) -> Result<()
             }
         }
     });
-    
+
     let mut app = App::new(rx, Platform::detect());
-        let result = app.run(&mut terminal).await;
+    let result = app.run(&mut terminal).await;
 
-        // Stop monitor
-        {
-            let mut m = monitor.lock().await;
-            let _ = m.stop().await;
-        }
-
-        disable_raw_mode()?;
-        execute!(stdout(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
-
-        result
+    // Stop monitor
+    {
+        let mut m = monitor.lock().await;
+        let _ = m.stop().await;
     }
+
+    // Disable mouse mode properly - SGR 1006 and default
+    print!("\x1b[?1006l"); // Disable SGR 1006
+    print!("\x1b[?1000l"); // Disable mouse tracking
+    print!("\x1b[?1003l"); // Disable any event mouse tracking
+    std::io::stdout().flush()?;
+
+    disable_raw_mode()?;
+    execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+
+    result
+}
 
 fn main() -> Result<()> {
     let rt = tokio::runtime::Runtime::new()?;

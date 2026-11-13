@@ -152,8 +152,19 @@ impl MacOSNetworkMonitor {
             return Ok(None);
         }
 
-        let (src_ip, src_port) = self.parse_addr(local_addr)?;
-        let (dst_ip, dst_port) = self.parse_addr(foreign_addr)?;
+        // Skip wildcard addresses early
+        if local_addr.contains("*") || foreign_addr.contains("*") {
+            return Ok(None);
+        }
+
+        let (src_ip, src_port) = match self.parse_addr(local_addr) {
+            Ok(v) => v,
+            Err(_) => return Ok(None), // Skip unparseable addresses silently
+        };
+        let (dst_ip, dst_port) = match self.parse_addr(foreign_addr) {
+            Ok(v) => v,
+            Err(_) => return Ok(None),
+        };
 
         // Skip if destination port is 0
         if dst_port == 0 {
