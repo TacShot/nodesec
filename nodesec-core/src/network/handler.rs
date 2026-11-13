@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
 
 pub struct ConnectionHandler {
-    monitor: Box<dyn NetworkMonitor>,
+    monitor: Arc<Mutex<Box<dyn NetworkMonitor>>>,
     events: Arc<Mutex<VecDeque<NetworkConnection>>>,
     threat_detector: Arc<Mutex<ThreatDetector>>,
     max_events: usize,
@@ -23,7 +23,7 @@ impl ConnectionHandler {
         let threat_detector = Arc::new(Mutex::new(ThreatDetector::new()));
 
         Self {
-            monitor,
+            monitor: Arc::new(Mutex::new(monitor)),
             events,
             threat_detector,
             max_events,
@@ -32,13 +32,14 @@ impl ConnectionHandler {
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        self.monitor.start().await?;
+        self.monitor.lock().await.start().await?;
 
         // Start periodic scanning
         let events = self.events.clone();
         let threat_detector = self.threat_detector.clone();
         let retention_seconds = self.retention_seconds;
         let max_events = self.max_events;
+        let monitor = self.monitor.clone();
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(2));
@@ -46,12 +47,11 @@ impl ConnectionHandler {
                 interval.tick().await;
 
                 // Trigger platform-specific scan
-                // This would call the monitor's scan_once method
-                // For now, we just maintain the sliding window
-                
+                let _ = monitor.lock().await.scan_once().await;
+
                 let mut events_lock = events.lock().await;
                 let now = chrono::Utc::now().timestamp() as u64;
-                
+
                 // Remove old events beyond retention
                 while let Some(front) = events_lock.front() {
                     if now - front.timestamp > retention_seconds {
@@ -60,7 +60,7 @@ impl ConnectionHandler {
                         break;
                     }
                 }
-                
+
                 // Limit total events
                 while events_lock.len() > max_events {
                     events_lock.pop_front();
@@ -74,7 +74,7 @@ impl ConnectionHandler {
     pub async fn get_recent_connections(&self, limit: usize) -> Vec<NetworkConnection> {
         let events = self.events.lock().await;
         let mut threat_detector = self.threat_detector.lock().await;
-        
+
         events
             .iter()
             .rev()
@@ -86,7 +86,7 @@ impl ConnectionHandler {
     pub async fn get_connection_stats(&self) -> ConnectionStats {
         let events = self.events.lock().await;
         let mut threat_detector = self.threat_detector.lock().await;
-        
+
         let total = events.len();
         let mut suspicious = 0;
         let mut critical = 0;
@@ -101,7 +101,7 @@ impl ConnectionHandler {
             if analyzed.threat_score >= 90 {
                 critical += 1;
             }
-            
+
             *by_protocol.entry(format!("{:?}", analyzed.protocol)).or_insert(0) += 1;
             *by_process.entry(analyzed.process_name.clone()).or_insert(0) += 1;
         }
@@ -117,7 +117,7 @@ impl ConnectionHandler {
 
     fn analyze_connection(conn: &NetworkConnection, detector: &mut ThreatDetector) -> NetworkConnection {
         let threat_score = detector.analyze(conn);
-        
+
         let mut analyzed = conn.clone();
         analyzed.threat_score = threat_score;
         analyzed.is_suspicious = threat_score >= 50;
@@ -147,7 +147,7 @@ impl Default for ConnectionStats {
 }
 
 impl ConnectionHandler {
-    pub fn platform(&self) -> Platform {
-        self.monitor.platform()
+    pub async fn platform(&self) -> Platform {
+        self.monitor.lock().await.platform()
     }
 }

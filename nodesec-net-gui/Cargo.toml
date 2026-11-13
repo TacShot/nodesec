@@ -3,22 +3,13 @@ name = "nodesec-net-gui"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
-description = "Network monitoring GUI for nodesec (Tauri + D3.js)"
+description = "Native Rust network monitoring GUI for nodesec (egui/eframe)"
 repository = { workspace = true }
 
 [dependencies]
 nodesec-core = { path = "../nodesec-core" }
-tauri = { version = "2.0", features = ["default"] }
-tauri-plugin-websocket = { version = "2.0", features = ["default"] }
-serde = { workspace = true }
-serde_json = { workspace = true }
-anyhow = { workspace = true }
+egui = { version = "0.29", features = ["default", "accesskit"] }
+eframe = { version = "0.29", features = ["default", "persistence", "accesskit"] }
 tokio = { workspace = true }
+anyhow = { workspace = true }
 chrono = { workspace = true }
-uuid = { workspace = true }
-dirs = { workspace = true }
-tokio-tungstenite = { workspace = true }
-futures-util = { workspace = true }
-
-[build-dependencies]
-tauri-build = { version = "2.0", features = [] }
