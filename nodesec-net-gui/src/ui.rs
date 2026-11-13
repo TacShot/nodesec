@@ -83,11 +83,12 @@ pub fn render_connections_table(
     
     ui.separator();
     
-    // Connections table
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    // Connections table with horizontal scrolling
+    egui::ScrollArea::both().show(ui, |ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
         egui::Grid::new("connections_table")
             .striped(true)
-            .min_col_width(60.0)
+            .min_col_width(80.0)
             .show(ui, |ui| {
                 // Header
                 ui.label(egui::RichText::new("Time").color(ORANGE).strong());
@@ -115,10 +116,8 @@ pub fn render_connections_table(
                         .map(|dt| dt.format("%H:%M:%S").to_string())
                         .unwrap_or_default();
                     
-                    let response = ui.selectable_label(
-                        *selected_connection == Some(i),
-                        ""
-                    );
+                    let is_selected = *selected_connection == Some(i);
+                    let response = ui.selectable_label(is_selected, "");
                     
                     if response.clicked() {
                         *selected_connection = Some(i);

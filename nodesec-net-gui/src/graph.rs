@@ -475,6 +475,7 @@ impl ConnectionGraph {
         
         let response = ui.allocate_rect(rect, Sense::click_and_drag());
         
+        // Handle pan - use secondary button or shift+drag to avoid conflicts with node selection
         if response.dragged_by(egui::PointerButton::Secondary) || 
            (response.dragged() && ui.input(|i| i.modifiers.shift)) {
             let delta = response.drag_delta();
@@ -501,8 +502,10 @@ impl ConnectionGraph {
             }
         }
         
-        if response.clicked() {
-            if let Some(click_pos) = response.interact_pointer_pos() {
+        // Handle click for node selection - use a separate interaction
+        let click_response = ui.interact(rect, egui::Id::new("graph_click"), Sense::click());
+        if click_response.clicked() {
+            if let Some(click_pos) = click_response.interact_pointer_pos() {
                 self.handle_click(ui, click_pos);
             }
         }
@@ -513,6 +516,7 @@ impl ConnectionGraph {
             }
         }
         
+        // Context menu on right-click
         response.context_menu(|ui| {
             if let Some(node) = self.get_selected() {
                 ui.heading("Node Actions");

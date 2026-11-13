@@ -354,11 +354,18 @@ impl App {
         let status = if self.running { "LIVE" } else { "PAUSED" };
         let status_color = if self.running { GREEN } else { YELLOW };
         
+        let scan_indicator = if self.last_update.elapsed().as_secs() < 3 {
+            " ● SCANNING"
+        } else {
+            ""
+        };
+        
         let header = Paragraph::new(
             Line::from(vec![
                 Span::styled("NODESEC NETWORK", Style::default().fg(ORANGE).add_modifier(Modifier::BOLD)),
                 Span::raw("  "),
                 Span::styled(format!("[{}]", status), Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
+                Span::styled(scan_indicator, Style::default().fg(YELLOW).add_modifier(Modifier::BOLD)),
                 Span::raw("  "),
                 Span::styled(format!("Platform: {:?}", self.platform), Style::default().fg(GRAY)),
                 Span::raw("  "),
