@@ -193,7 +193,7 @@ fn detail_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.label(egui::RichText::new(value).color(WHITE).size(12.0));
 }
 
-fn terminate_process(pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
+pub fn terminate_process(pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
     #[cfg(target_os = "macos")]
     {
         let _ = std::process::Command::new("kill")
@@ -226,7 +226,7 @@ fn terminate_process(pid: u32, process_name: &str, monitor_state: &crate::state:
     });
 }
 
-fn block_port(port: u16, pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
+pub fn block_port(port: u16, pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
     #[cfg(target_os = "macos")]
     {
         let rule = format!("block out proto tcp from any to any port {}", port);
@@ -262,7 +262,7 @@ fn block_port(port: u16, pid: u32, process_name: &str, monitor_state: &crate::st
     });
 }
 
-fn allow_port(port: u16, pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
+pub fn allow_port(port: u16, pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
     #[cfg(target_os = "macos")]
     {
         let _ = std::process::Command::new("pfctl")
@@ -296,7 +296,7 @@ fn allow_port(port: u16, pid: u32, process_name: &str, monitor_state: &crate::st
     });
 }
 
-fn block_ip(ip: &str, pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
+pub fn block_ip(ip: &str, pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
     #[cfg(target_os = "macos")]
     {
         let _ = std::process::Command::new("pfctl")
@@ -721,7 +721,7 @@ pub fn render_dashboard(
     });
 }
 
-pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::MonitorState, filter: &mut FilterSettings) {
+pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::MonitorState, filter: &mut FilterSettings, selected_process: &mut Option<u32>) {
     let connections = monitor_state.connections.lock().unwrap();
     let processes = ProcessTreeItem::from_connections(&connections);
     
@@ -735,94 +735,173 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
     ui.heading(egui::RichText::new("Process Network Tree").color(ORANGE));
     ui.separator();
     
+    // Toolbar
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Click row to select • Right-click for actions").color(GRAY).size(11.0));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Expand All").clicked() {
+                // All rows are always visible in table view
+            }
+        });
+    });
+    ui.separator();
+    
     egui::ScrollArea::vertical().show(ui, |ui| {
-        for proc in processes {
-            // Apply filter
-            let mut matches = true;
-            if !filter.process_name.is_empty() {
-                if !proc.name.to_lowercase().contains(&filter.process_name.to_lowercase()) {
-                    matches = false;
-                }
-            }
-            if let Some(pid) = filter.pid {
-                if proc.pid != pid {
-                    matches = false;
-                }
-            }
-            if filter.only_suspicious && !proc.is_suspicious {
-                matches = false;
-            }
-            if proc.total_threat_score < filter.min_threat_score || proc.total_threat_score > filter.max_threat_score {
-                matches = false;
-            }
-            
-            if !matches {
-                continue;
-            }
-            
-            let threat_color = match proc.total_threat_score {
-                0..=25 => GREEN,
-                26..=49 => YELLOW,
-                50..=74 => ORANGE,
-                75..=89 => egui::Color32::from_rgb(255, 100, 100),
-                _ => RED,
-            };
-            
-            ui.collapsing(
-                egui::RichText::new(format!(
-                    "{} (PID: {}) - {} connections - {}",
-                    proc.name, proc.pid, proc.connections.len(),
-                    if proc.is_suspicious { "⚠️ SUSPICIOUS" } else { "✓" }
-                )).color(threat_color).size(13.0).strong(),
-                |ui| {
-                    ui.add_space(5.0);
-                    
-                    if let Some(path) = &proc.path {
-                        ui.label(egui::RichText::new(format!("Path: {}", path)).color(GRAY));
+        egui::Grid::new("process_tree")
+            .striped(true)
+            .min_col_width(100.0)
+            .show(ui, |ui| {
+                // Header
+                ui.label(egui::RichText::new("Process").color(ORANGE).strong());
+                ui.label(egui::RichText::new("PID").color(ORANGE).strong());
+                ui.label(egui::RichText::new("User").color(ORANGE).strong());
+                ui.label(egui::RichText::new("Connections").color(ORANGE).strong());
+                ui.label(egui::RichText::new("Max Threat").color(ORANGE).strong());
+                ui.label(egui::RichText::new("Status").color(ORANGE).strong());
+                ui.end_row();
+                
+                for proc in processes {
+                    // Apply filter
+                    let mut matches = true;
+                    if !filter.process_name.is_empty() {
+                        if !proc.name.to_lowercase().contains(&filter.process_name.to_lowercase()) {
+                            matches = false;
+                        }
                     }
-                    if let Some(user) = &proc.user {
-                        ui.label(egui::RichText::new(format!("User: {}", user)).color(GRAY));
+                    if let Some(pid) = filter.pid {
+                        if proc.pid != pid {
+                            matches = false;
+                        }
+                    }
+                    if filter.only_suspicious && !proc.is_suspicious {
+                        matches = false;
+                    }
+                    if proc.total_threat_score < filter.min_threat_score || proc.total_threat_score > filter.max_threat_score {
+                        matches = false;
                     }
                     
-                    ui.separator();
-                    ui.label(egui::RichText::new("Network Connections:").color(WHITE).strong());
+                    if !matches {
+                        continue;
+                    }
                     
-                    egui::Grid::new(format!("proc_conns_{}", proc.pid))
-                        .striped(true)
-                        .min_col_width(80.0)
-                        .show(ui, |ui| {
-                            ui.label(egui::RichText::new("Protocol").color(ORANGE).strong());
-                            ui.label(egui::RichText::new("Source").color(ORANGE).strong());
-                            ui.label(egui::RichText::new("Destination").color(ORANGE).strong());
-                            ui.label(egui::RichText::new("Threat").color(ORANGE).strong());
-                            ui.end_row();
-                            
-                            for conn in &proc.connections {
-                                let proto = format!("{:?}", conn.protocol);
-                                let src = format!("{}:{}", conn.src_ip, conn.src_port);
-                                let dst = format!("{}:{}", conn.dst_ip, conn.dst_port);
-                                let threat_color = match conn.threat_score {
-                                    0..=25 => GREEN,
-                                    26..=49 => YELLOW,
-                                    50..=74 => ORANGE,
-                                    75..=89 => egui::Color32::from_rgb(255, 100, 100),
-                                    _ => RED,
-                                };
-                                
-                                ui.label(proto);
-                                ui.label(src);
-                                ui.label(dst);
-                                ui.colored_label(threat_color, conn.threat_score.to_string());
-                                ui.end_row();
+                    let threat_color = match proc.total_threat_score {
+                        0..=25 => GREEN,
+                        26..=49 => YELLOW,
+                        50..=74 => ORANGE,
+                        75..=89 => egui::Color32::from_rgb(255, 100, 100),
+                        _ => RED,
+                    };
+                    
+                    let is_selected = selected_process.as_ref() == Some(&proc.pid);
+                    
+                    let response = ui.selectable_label(is_selected, "");
+                    if response.clicked() {
+                        *selected_process = Some(proc.pid);
+                    }
+                    if response.secondary_clicked() {
+                        *selected_process = Some(proc.pid);
+                    }
+                    
+                    // Process name with icon
+                    ui.horizontal(|ui| {
+                        let icon = if proc.is_suspicious { "⚠️ " } else { "✓ " };
+                        ui.label(egui::RichText::new(format!("{}{}", icon, proc.name)).color(if is_selected { YELLOW } else { WHITE }).size(12.0).strong());
+                    });
+                    ui.label(proc.pid.to_string());
+                    ui.label(proc.user.as_deref().unwrap_or("N/A"));
+                    ui.label(proc.connections.len().to_string());
+                    ui.colored_label(threat_color, proc.total_threat_score.to_string());
+                    ui.colored_label(threat_color, if proc.is_suspicious { "SUSPICIOUS" } else { "OK" });
+                    ui.end_row();
+                    
+                    // Context menu for process row
+                    response.context_menu(|ui| {
+                        ui.heading(format!("{} (PID: {})", proc.name, proc.pid));
+                        ui.separator();
+                        
+                        if let Some(path) = &proc.path {
+                            ui.label(format!("Path: {}", path));
+                            ui.separator();
+                        }
+                        
+                        if ui.button("🔴 Terminate Process").clicked() {
+                            crate::ui::terminate_process(proc.pid, &proc.name, monitor_state);
+                            ui.close_menu();
+                        }
+                        if ui.button("🚫 Block All Ports").clicked() {
+                            ui.close_menu();
+                        }
+                        if ui.button("📋 Copy PID").clicked() {
+                            ui.output_mut(|o| o.copied_text = proc.pid.to_string());
+                            ui.close_menu();
+                        }
+                        if ui.button("📋 Copy Process Name").clicked() {
+                            ui.output_mut(|o| o.copied_text = proc.name.clone());
+                            ui.close_menu();
+                        }
+                        if let Some(path) = &proc.path {
+                            if ui.button("📋 Copy Path").clicked() {
+                                ui.output_mut(|o| o.copied_text = path.clone());
+                                ui.close_menu();
                             }
-                        });
+                        }
+                        
+                        ui.separator();
+                        if ui.button("🔍 Show Connections").clicked() {
+                            *selected_process = Some(proc.pid);
+                            ui.close_menu();
+                        }
+                    });
+                    
+                    // Show connection details inline for selected process
+                    if is_selected {
+                        ui.add_space(4.0);
+                        if let Some(path) = &proc.path {
+                            ui.label(egui::RichText::new(format!("Path: {}", path)).color(GRAY).size(11.0));
+                        }
+                        if let Some(user) = &proc.user {
+                            ui.label(egui::RichText::new(format!("User: {}", user)).color(GRAY).size(11.0));
+                        }
+                        ui.separator();
+                        ui.label(egui::RichText::new("Network Connections:").color(WHITE).strong().size(11.0));
+                        
+                        egui::Grid::new(format!("proc_conns_{}", proc.pid))
+                            .striped(true)
+                            .min_col_width(80.0)
+                            .show(ui, |ui| {
+                                ui.label(egui::RichText::new("Protocol").color(ORANGE).strong().size(11.0));
+                                ui.label(egui::RichText::new("Source").color(ORANGE).strong().size(11.0));
+                                ui.label(egui::RichText::new("Destination").color(ORANGE).strong().size(11.0));
+                                ui.label(egui::RichText::new("Threat").color(ORANGE).strong().size(11.0));
+                                ui.end_row();
+                                
+                                for conn in &proc.connections {
+                                    let proto = format!("{:?}", conn.protocol);
+                                    let src = format!("{}:{}", conn.src_ip, conn.src_port);
+                                    let dst = format!("{}:{}", conn.dst_ip, conn.dst_port);
+                                    let conn_threat_color = match conn.threat_score {
+                                        0..=25 => GREEN,
+                                        26..=49 => YELLOW,
+                                        50..=74 => ORANGE,
+                                        75..=89 => egui::Color32::from_rgb(255, 100, 100),
+                                        _ => RED,
+                                    };
+                                    
+                                    ui.label(egui::RichText::new(proto).size(11.0));
+                                    ui.label(egui::RichText::new(src).size(11.0));
+                                    ui.label(egui::RichText::new(dst).size(11.0));
+                                    ui.colored_label(conn_threat_color, egui::RichText::new(conn.threat_score.to_string()).size(11.0));
+                                    ui.end_row();
+                                }
+                            });
+                        ui.add_space(8.0);
+                    }
                 }
-            );
-        }
+            });
     });
 }
 
-pub fn render_connection_graph(ui: &mut egui::Ui, graph: &mut crate::graph::ConnectionGraph) {
+pub fn render_connection_graph(ui: &mut egui::Ui, graph: &mut crate::graph::ConnectionGraph, monitor_state: &crate::state::MonitorState) {
     ui.heading(egui::RichText::new("Connection Graph").color(ORANGE));
     ui.separator();
     
@@ -861,7 +940,7 @@ pub fn render_connection_graph(ui: &mut egui::Ui, graph: &mut crate::graph::Conn
                 ui.horizontal(|ui| {
                     if ui.button("🔴 Terminate").clicked() {
                         if let Some(pid) = node.pid {
-                            terminate_process(pid, &node.process_name, &crate::state::MonitorState::new(nodesec_core::models::Platform::detect()));
+                            crate::ui::terminate_process(pid, &node.process_name, monitor_state);
                         }
                     }
                     if ui.button("🚫 Block All Ports").clicked() {

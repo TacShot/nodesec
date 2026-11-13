@@ -1,10 +1,10 @@
 //! Connection graph visualization for network monitoring
 
-use egui::{Color32, Pos2, Response, Shape, Sense, Stroke, Vec2, Widget};
+use egui::{Color32, Pos2, Response, Shape, Sense, Stroke, Vec2, Widget, Align2, FontId};
 use nodesec_core::models::NetworkConnection;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 pub struct GraphNode {
@@ -43,7 +43,6 @@ impl ConnectionType {
     pub fn from_connection(conn: &NetworkConnection) -> Self {
         match conn.protocol {
             nodesec_core::models::NetworkProtocol::Tcp => {
-                // Heuristics for connection type
                 if conn.dst_ip.is_loopback() || conn.src_ip.is_loopback() {
                     ConnectionType::Local
                 } else if conn.dst_port == 443 || conn.dst_port == 80 {
@@ -101,40 +100,57 @@ pub struct ConnectionGraph {
     pub edges: Arc<Mutex<Vec<GraphEdge>>>,
     layout_iteration: Mutex<usize>,
     pub selected_node: Arc<Mutex<Option<String>>>,
+    pub hovered_node: Arc<Mutex<Option<String>>>,
     last_update: Mutex<Instant>,
     center_pos: Arc<Mutex<Pos2>>,
     zoom: Arc<Mutex<f32>>,
     pan_offset: Arc<Mutex<Vec2>>,
+    last_connection_count: Mutex<usize>,
+    layout_dirty: Arc<Mutex<bool>>,
+    pub monitor_state: Arc<crate::state::MonitorState>,
 }
 
 impl ConnectionGraph {
-    pub fn new() -> Self {
+    pub fn new(monitor_state: Arc<crate::state::MonitorState>) -> Self {
         Self {
             nodes: Arc::new(Mutex::new(HashMap::new())),
             edges: Arc::new(Mutex::new(Vec::new())),
             layout_iteration: Mutex::new(0),
             selected_node: Arc::new(Mutex::new(None)),
+            hovered_node: Arc::new(Mutex::new(None)),
             last_update: Mutex::new(Instant::now()),
             center_pos: Arc::new(Mutex::new(Pos2::new(400.0, 300.0))),
             zoom: Arc::new(Mutex::new(1.0)),
             pan_offset: Arc::new(Mutex::new(Vec2::ZERO)),
+            last_connection_count: Mutex::new(0),
+            layout_dirty: Arc::new(Mutex::new(true)),
+            monitor_state,
         }
     }
     
     pub fn update(&self, connections: &[crate::state::ConnectionItem]) {
+        let conn_count = connections.len();
+        let mut last_count = self.last_connection_count.lock().unwrap();
+        let count_changed = (conn_count as i32 - *last_count as i32).abs() > 3;
+        *last_count = conn_count;
+        
+        if !count_changed && !*self.layout_dirty.lock().unwrap() {
+            self.update_node_attributes(connections);
+            return;
+        }
+        
+        *self.layout_dirty.lock().unwrap() = false;
+        
         let mut nodes = self.nodes.lock().unwrap();
         let mut edges = self.edges.lock().unwrap();
         
-        // Preserve existing node positions for stability
         let old_positions: HashMap<String, Pos2> = nodes.iter()
             .map(|(k, v)| (k.clone(), v.pos))
             .collect();
         
-        // Clear old data
         nodes.clear();
         edges.clear();
         
-        // Group connections by process
         let mut process_connections: HashMap<u32, Vec<&NetworkConnection>> = HashMap::new();
         for item in connections {
             process_connections
@@ -143,7 +159,6 @@ impl ConnectionGraph {
                 .push(&item.connection);
         }
         
-        // Create process nodes - organized by interface/type
         let mut interface_groups: HashMap<String, Vec<u32>> = HashMap::new();
         
         for (pid, conns) in &process_connections {
@@ -157,7 +172,6 @@ impl ConnectionGraph {
                 Color32::from_rgb(0, 200, 100)
             };
             
-            // Determine interface type from first connection
             let conn_type = ConnectionType::from_connection(first);
             let interface_key = conn_type.label().to_string();
             interface_groups.entry(interface_key.clone()).or_default().push(*pid);
@@ -182,7 +196,6 @@ impl ConnectionGraph {
             nodes.insert(node.id.clone(), node);
         }
         
-        // Create remote host nodes and edges - grouped by interface
         let mut remote_hosts: HashMap<String, (String, u16, Vec<&NetworkConnection>, ConnectionType)> = HashMap::new();
         
         for item in connections {
@@ -225,7 +238,6 @@ impl ConnectionGraph {
             };
             nodes.insert(node.id.clone(), node);
             
-            // Create edges from processes to this host
             let mut process_ids: HashSet<u32> = HashSet::new();
             for conn in conns {
                 process_ids.insert(conn.pid);
@@ -241,18 +253,59 @@ impl ConnectionGraph {
             }
         }
         
-        // Run improved force-directed layout with damping
         self.run_layout(&mut nodes, &edges);
     }
     
-    fn run_layout(&self, nodes: &mut HashMap<String, GraphNode>, edges: &[GraphEdge]) {
-        // Improved force-directed layout with damping and interface-based grouping
-        let center = *self.center_pos.lock().unwrap();
-        let k = 200.0; // Optimal distance
-        let damping = 0.85; // Damping factor to reduce shaking
-        let max_displacement = 50.0; // Max movement per iteration
+    fn update_node_attributes(&self, connections: &[crate::state::ConnectionItem]) {
+        let mut nodes = self.nodes.lock().unwrap();
         
-        // Group nodes by interface for initial positioning
+        let mut process_threats: HashMap<u32, (u32, bool)> = HashMap::new();
+        let mut host_threats: HashMap<String, (u32, bool)> = HashMap::new();
+        
+        for item in connections {
+            let conn = &item.connection;
+            let proc_entry = process_threats.entry(conn.pid).or_insert((0, false));
+            proc_entry.0 += conn.threat_score as u32;
+            proc_entry.1 = proc_entry.1 || conn.is_suspicious;
+            
+            let host_key = format!("{}:{}", conn.dst_ip, conn.dst_port);
+            let host_entry = host_threats.entry(host_key).or_insert((0, false));
+            host_entry.0 += conn.threat_score as u32;
+            host_entry.1 = host_entry.1 || conn.is_suspicious;
+        }
+        
+        for (pid, (total_threat, is_suspicious)) in &process_threats {
+            let avg_threat = total_threat / process_threats.get(pid).map(|_| 1).unwrap_or(1);
+            if let Some(node) = nodes.get_mut(&format!("proc_{}", pid)) {
+                node.threat_score = avg_threat as u8;
+                node.color = if *is_suspicious {
+                    if avg_threat > 75 { Color32::RED } else { Color32::from_rgb(255, 165, 0) }
+                } else {
+                    Color32::from_rgb(0, 200, 100)
+                };
+            }
+        }
+        
+        for (key, (total_threat, is_suspicious)) in &host_threats {
+            let avg_threat = total_threat / host_threats.get(key).map(|_| 1).unwrap_or(1);
+            if let Some(node) = nodes.get_mut(&format!("host_{}", key)) {
+                node.threat_score = avg_threat as u8;
+                let conn_type = ConnectionType::from_connection(&connections[0].connection);
+                node.color = if *is_suspicious {
+                    if avg_threat > 75 { Color32::RED } else { Color32::from_rgb(255, 165, 0) }
+                } else {
+                    conn_type.color()
+                };
+            }
+        }
+    }
+    
+    fn run_layout(&self, nodes: &mut HashMap<String, GraphNode>, edges: &[GraphEdge]) {
+        let center = *self.center_pos.lock().unwrap();
+        let k = 200.0;
+        let damping = 0.85;
+        let max_displacement = 30.0;
+        
         let mut interface_positions: HashMap<String, Vec<String>> = HashMap::new();
         for (id, node) in nodes.iter() {
             interface_positions
@@ -261,7 +314,6 @@ impl ConnectionGraph {
                 .push(id.clone());
         }
         
-        // Initialize positions in interface-based clusters
         let interface_count = interface_positions.len() as f32;
         for (idx, (interface, node_ids)) in interface_positions.iter().enumerate() {
             let angle = (idx as f32 / interface_count) * 2.0 * std::f32::consts::PI;
@@ -273,22 +325,22 @@ impl ConnectionGraph {
             let node_count = node_ids.len() as f32;
             for (i, node_id) in node_ids.iter().enumerate() {
                 if let Some(node) = nodes.get_mut(node_id) {
-                    let angle = (i as f32 / node_count) * 2.0 * std::f32::consts::PI;
-                    let radius = if node.is_process { 80.0 } else { 120.0 };
-                    node.pos = Pos2::new(
-                        cluster_center.x + angle.cos() * radius,
-                        cluster_center.y + angle.sin() * radius,
-                    );
-                    node.target_pos = node.pos;
+                    if node.pos == Pos2::ZERO {
+                        let angle = (i as f32 / node_count) * 2.0 * std::f32::consts::PI;
+                        let radius = if node.is_process { 80.0 } else { 120.0 };
+                        node.pos = Pos2::new(
+                            cluster_center.x + angle.cos() * radius,
+                            cluster_center.y + angle.sin() * radius,
+                        );
+                        node.target_pos = node.pos;
+                    }
                 }
             }
         }
         
-        // Run iterations with damping
-        for iteration in 0..30 {
-            let temp_k = k * (1.0 - iteration as f32 / 30.0); // Cooling schedule
+        for iteration in 0..20 {
+            let temp_k = k * (1.0 - iteration as f32 / 20.0);
             
-            // Repulsion between all nodes (with early exit for distant nodes)
             let node_ids: Vec<String> = nodes.keys().cloned().collect();
             for i in 0..node_ids.len() {
                 for j in (i + 1)..node_ids.len() {
@@ -299,13 +351,11 @@ impl ConnectionGraph {
                         let diff = n2.pos - n1.pos;
                         let dist = diff.length().max(1.0);
                         
-                        // Skip if too far apart
                         if dist > 500.0 { continue; }
                         
                         let force = temp_k * temp_k / dist;
                         let dir = diff / dist;
-                        
-                        let displacement = (force * 0.02 * damping).min(max_displacement);
+                        let displacement = (force * 0.015 * damping).min(max_displacement);
                         
                         if let Some(n1_mut) = nodes.get_mut(id1) {
                             n1_mut.pos -= dir * displacement;
@@ -317,15 +367,13 @@ impl ConnectionGraph {
                 }
             }
             
-            // Attraction along edges
             for edge in edges {
                 if let (Some(n1), Some(n2)) = (nodes.get(&edge.from), nodes.get(&edge.to)) {
                     let diff = n2.pos - n1.pos;
                     let dist = diff.length().max(1.0);
                     let force = dist * dist / temp_k;
                     let dir = diff / dist;
-                    
-                    let displacement = (force * 0.02 * damping).min(max_displacement);
+                    let displacement = (force * 0.015 * damping).min(max_displacement);
                     
                     if let Some(n1_mut) = nodes.get_mut(&edge.from) {
                         n1_mut.pos += dir * displacement;
@@ -336,13 +384,21 @@ impl ConnectionGraph {
                 }
             }
             
-            // Center gravity (gentle)
             for (_, node) in nodes.iter_mut() {
                 let to_center = center - node.pos;
                 let dist = to_center.length();
                 if dist > 400.0 {
-                    node.pos += to_center * 0.02;
+                    node.pos += to_center * 0.015;
                 }
+            }
+        }
+        
+        for (_, node) in nodes.iter_mut() {
+            let diff = node.target_pos - node.pos;
+            if diff.length() > 1.0 {
+                node.pos += diff * 0.1;
+            } else {
+                node.pos = node.target_pos;
             }
         }
         
@@ -358,10 +414,20 @@ impl ConnectionGraph {
         *self.selected_node.lock().unwrap() = None;
     }
     
+    pub fn set_hovered_node(&self, node_id: Option<String>) {
+        *self.hovered_node.lock().unwrap() = node_id;
+    }
+    
     pub fn get_selected(&self) -> Option<GraphNode> {
         let selected_id = self.selected_node.lock().unwrap().clone()?;
         let nodes = self.nodes.lock().unwrap();
         nodes.get(&selected_id).cloned()
+    }
+    
+    pub fn get_hovered(&self) -> Option<GraphNode> {
+        let hovered_id = self.hovered_node.lock().unwrap().clone()?;
+        let nodes = self.nodes.lock().unwrap();
+        nodes.get(&hovered_id).cloned()
     }
     
     pub fn handle_click(&self, ui: &egui::Ui, pos: Pos2) -> bool {
@@ -369,7 +435,6 @@ impl ConnectionGraph {
         let zoom = *self.zoom.lock().unwrap();
         let pan = *self.pan_offset.lock().unwrap();
         
-        // Transform click position to graph coordinates
         let graph_pos = (pos - pan) / zoom;
         
         for (id, node) in nodes.iter() {
@@ -382,38 +447,130 @@ impl ConnectionGraph {
         false
     }
     
+    pub fn handle_hover(&self, ui: &egui::Ui, pos: Pos2) -> bool {
+        let nodes = self.nodes.lock().unwrap();
+        let zoom = *self.zoom.lock().unwrap();
+        let pan = *self.pan_offset.lock().unwrap();
+        
+        let graph_pos = (pos - pan) / zoom;
+        
+        for (id, node) in nodes.iter() {
+            let dist = (node.pos - graph_pos).length();
+            if dist < node.size {
+                *self.hovered_node.lock().unwrap() = Some(id.clone());
+                return true;
+            }
+        }
+        *self.hovered_node.lock().unwrap() = None;
+        false
+    }
+    
     pub fn render(&self, ui: &mut egui::Ui, rect: egui::Rect) -> Response {
         let nodes = self.nodes.lock().unwrap();
         let edges = self.edges.lock().unwrap();
         let zoom = *self.zoom.lock().unwrap();
         let pan = *self.pan_offset.lock().unwrap();
+        let selected_id = self.selected_node.lock().unwrap().clone();
+        let hovered_id = self.hovered_node.lock().unwrap().clone();
         
         let response = ui.allocate_rect(rect, Sense::click_and_drag());
         
-        // Handle pan/zoom
-        if response.dragged() {
+        if response.dragged_by(egui::PointerButton::Secondary) || 
+           (response.dragged() && ui.input(|i| i.modifiers.shift)) {
             let delta = response.drag_delta();
             *self.pan_offset.lock().unwrap() += delta;
         }
         
         if response.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+            let scroll = ui.input(|i| i.smooth_scroll_delta.y + i.raw_scroll_delta.y);
             if scroll != 0.0 {
                 let mut z = self.zoom.lock().unwrap();
-                *z = (*z * (1.0 + scroll * 0.01)).clamp(0.1, 5.0);
+                let old_zoom = *z;
+                *z = (*z * (1.0 + scroll * 0.008)).clamp(0.15, 5.0);
+                
+                if let Some(mouse_pos) = response.hover_pos() {
+                    let rel_pos = (mouse_pos - *self.center_pos.lock().unwrap()) / old_zoom;
+                    *self.pan_offset.lock().unwrap() -= rel_pos * (*z - old_zoom);
+                }
+            }
+            
+            let pinch = ui.input(|i| i.zoom_delta());
+            if pinch != 1.0 {
+                let mut z = self.zoom.lock().unwrap();
+                *z = (*z * pinch).clamp(0.15, 5.0);
             }
         }
         
-        // Handle click
         if response.clicked() {
             if let Some(click_pos) = response.interact_pointer_pos() {
                 self.handle_click(ui, click_pos);
             }
         }
         
+        if response.hovered() {
+            if let Some(hover_pos) = response.hover_pos() {
+                self.handle_hover(ui, hover_pos);
+            }
+        }
+        
+        response.context_menu(|ui| {
+            if let Some(node) = self.get_selected() {
+                ui.heading("Node Actions");
+                ui.separator();
+                
+                let monitor_state = self.monitor_state.clone();
+                
+                if node.is_process {
+                    if let Some(pid) = node.pid {
+                        if ui.button("🔴 Terminate Process").clicked() {
+                            crate::ui::terminate_process(pid, &node.process_name, &monitor_state);
+                            ui.close_menu();
+                        }
+                        if ui.button("🚫 Block All Ports").clicked() {
+                            ui.close_menu();
+                        }
+                        if ui.button("📋 Copy PID").clicked() {
+                            ui.output_mut(|o| o.copied_text = pid.to_string());
+                            ui.close_menu();
+                        }
+                        if ui.button("📋 Copy Process Name").clicked() {
+                            ui.output_mut(|o| o.copied_text = node.process_name);
+                            ui.close_menu();
+                        }
+                    }
+                } else {
+                    if let Some(ip) = &node.remote_ip {
+                        if ui.button("🚫 Block IP").clicked() {
+                            crate::ui::block_ip(ip, node.pid.unwrap_or(0), &node.label, &monitor_state);
+                            ui.close_menu();
+                        }
+                    }
+                    if let Some(port) = node.remote_port {
+                        if ui.button("🚫 Block Port").clicked() {
+                            crate::ui::block_port(port, node.pid.unwrap_or(0), &node.label, &monitor_state);
+                            ui.close_menu();
+                        }
+                    }
+                    if ui.button("📋 Copy IP:Port").clicked() {
+                        ui.output_mut(|o| o.copied_text = node.label);
+                        ui.close_menu();
+                    }
+                }
+                
+                ui.separator();
+                if ui.button("🔍 Focus on Node").clicked() {
+                    if let Some(n) = self.get_selected() {
+                        let zoom = *self.zoom.lock().unwrap();
+                        *self.center_pos.lock().unwrap() = response.rect.center() - n.pos.to_vec2() * zoom;
+                        *self.pan_offset.lock().unwrap() = Vec2::ZERO;
+                    }
+                    ui.close_menu();
+                }
+            }
+        });
+        
         let painter = ui.painter();
         
-        // Draw edges
         for edge in edges.iter() {
             if let (Some(from), Some(to)) = (nodes.get(&edge.from), nodes.get(&edge.to)) {
                 let from_pos = from.pos * zoom + pan;
@@ -425,54 +582,50 @@ impl ConnectionGraph {
             }
         }
         
-        // Draw nodes
-        let selected_id = self.selected_node.lock().unwrap().clone();
         for (id, node) in nodes.iter() {
             let pos = node.pos * zoom + pan;
             let size = node.size * zoom;
             let is_selected = selected_id.as_ref() == Some(id);
+            let is_hovered = hovered_id.as_ref() == Some(id);
             
-            // Node circle
-            painter.add(Shape::circle_filled(pos, size, node.color));
-            
-            // Selection border
-            if is_selected {
-                painter.add(Shape::circle_stroke(
-                    pos, 
-                    size + 3.0, 
-                    Stroke::new(3.0, Color32::YELLOW),
-                ));
+            let fill_color = if is_selected {
+                node.color.gamma_multiply(1.3)
+            } else if is_hovered {
+                node.color.gamma_multiply(1.15)
             } else {
-                painter.add(Shape::circle_stroke(
-                    pos, 
-                    size, 
-                    Stroke::new(2.0, Color32::WHITE),
-                ));
+                node.color
+            };
+            
+            painter.add(Shape::circle_filled(pos, size, fill_color));
+            
+            if is_selected {
+                painter.add(Shape::circle_stroke(pos, size + 4.0, Stroke::new(3.0 * zoom, Color32::YELLOW)));
+            } else if is_hovered {
+                painter.add(Shape::circle_stroke(pos, size + 2.0, Stroke::new(2.0 * zoom, Color32::WHITE)));
+            } else {
+                painter.add(Shape::circle_stroke(pos, size, Stroke::new(2.0 * zoom, Color32::WHITE)));
             }
             
-            // Label
             painter.text(
-                pos + Vec2::new(0.0, size + 15.0),
-                egui::Align2::CENTER_TOP,
+                pos + Vec2::new(0.0, size + 15.0 * zoom),
+                Align2::CENTER_TOP,
                 &node.label,
-                egui::FontId::proportional(10.0),
+                FontId::proportional(10.0 * zoom.max(0.5)),
                 Color32::WHITE,
             );
             
-            // Connection count
             if node.connections > 1 {
                 painter.text(
-                    pos + Vec2::new(0.0, size + 28.0),
-                    egui::Align2::CENTER_TOP,
-                    format!("{} connections", node.connections),
-                    egui::FontId::proportional(9.0),
+                    pos + Vec2::new(0.0, size + 28.0 * zoom),
+                    Align2::CENTER_TOP,
+                    format!("{} conn", node.connections),
+                    FontId::proportional(9.0 * zoom.max(0.5)),
                     Color32::GRAY,
                 );
             }
         }
         
-        // Legend
-        let legend_y = rect.bottom() - 80.0;
+        let legend_y = rect.bottom() - 70.0;
         let legend_items = [
             (ConnectionType::Process, "Process"),
             (ConnectionType::Tcp, "TCP"),
@@ -486,19 +639,18 @@ impl ConnectionGraph {
             painter.add(Shape::circle_filled(Pos2::new(x, y), 8.0, ct.color()));
             painter.text(
                 Pos2::new(x + 15.0, y),
-                egui::Align2::LEFT_CENTER,
+                Align2::LEFT_CENTER,
                 label,
-                egui::FontId::proportional(10.0),
+                FontId::proportional(10.0),
                 Color32::WHITE,
             );
         }
         
-        // Controls hint
         painter.text(
             Pos2::new(rect.right() - 10.0, rect.bottom() - 10.0),
-            egui::Align2::RIGHT_BOTTOM,
-            "Click node for details • Drag to pan • Scroll to zoom",
-            egui::FontId::proportional(10.0),
+            Align2::RIGHT_BOTTOM,
+            "Click: select • Right-drag: pan • Scroll: zoom • Pinch: zoom • Right-click: menu",
+            FontId::proportional(10.0),
             Color32::GRAY,
         );
         
