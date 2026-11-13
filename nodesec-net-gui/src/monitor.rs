@@ -78,8 +78,7 @@ pub fn start_monitoring(
             let events = {
                 let mut monitor_guard = monitor.lock().await;
                 if let Some(mon) = monitor_guard.as_mut() {
-                    let rt = tokio::runtime::Runtime::new().unwrap();
-                    rt.block_on(mon.drain_events())
+                    mon.drain_events().await
                 } else {
                     Vec::new()
                 }

@@ -742,12 +742,21 @@ pub async fn run_net_tui(_interface: Option<String>, interval: u64) -> Result<()
         let _ = m.stop().await;
     }
 
-    // Disable mouse mode properly via crossterm - use the same stdout handle
-    drop(terminal); // Release the backend
-    disable_raw_mode()?;
+    // Disable mouse mode properly - send escape sequences BEFORE dropping terminal
+    // Use raw escape sequences to ensure they're sent correctly on macOS
     let mut stdout_handle = std::io::stdout();
-    execute!(stdout_handle, LeaveAlternateScreen, DisableMouseCapture)?;
-    stdout_handle.flush()?;
+    // Disable mouse tracking modes in order
+    let _ = execute!(stdout_handle, 
+        crossterm::terminal::LeaveAlternateScreen,
+        crossterm::event::DisableMouseCapture
+    );
+    // Explicitly send SGR 1006 disable + standard mouse tracking disable
+    use std::io::Write;
+    let _ = stdout_handle.write_all(b"\x1b[?1006l\x1b[?1000l\x1b[?1003l");
+    let _ = stdout_handle.flush();
+    
+    drop(terminal);
+    disable_raw_mode()?;
 
     result
 }
