@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Nodesec Network Monitor",
         "width": 1200,
         "height": 800,

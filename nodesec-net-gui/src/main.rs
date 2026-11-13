@@ -1,18 +1,11 @@
-use tauri::{WebviewUrl, WebviewWindowBuilder};
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let window = WebviewWindowBuilder::new(
-                app,
-                "main",
-                WebviewUrl::App("index.html".into()),
-            )
-            .title("Nodesec Network Monitor")
-            .inner_size(1200.0, 800.0)
-            .min_inner_size(900.0, 600.0)
-            .build()?;
+            // Get the main window created from tauri.conf.json
+            let window = app.get_webview_window("main").expect("main window not found");
             
             #[cfg(debug_assertions)]
             {
