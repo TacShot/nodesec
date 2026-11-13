@@ -62,6 +62,50 @@ pub struct ConnectionStats {
     pub bytes_received: u64,
 }
 
+/// Process tree item for hierarchical display
+#[derive(Debug, Clone)]
+pub struct ProcessTreeItem {
+    pub pid: u32,
+    pub name: String,
+    pub path: Option<String>,
+    pub user: Option<String>,
+    pub connections: Vec<NetworkConnection>,
+    pub children: Vec<ProcessTreeItem>,
+    pub total_threat_score: u8,
+    pub is_suspicious: bool,
+}
+
+impl ProcessTreeItem {
+    pub fn from_connections(connections: &[ConnectionItem]) -> Vec<ProcessTreeItem> {
+        use std::collections::HashMap;
+        
+        let mut process_map: HashMap<u32, ProcessTreeItem> = HashMap::new();
+        
+        for item in connections {
+            let conn = &item.connection;
+            let entry = process_map.entry(conn.pid).or_insert_with(|| ProcessTreeItem {
+                pid: conn.pid,
+                name: conn.process_name.clone(),
+                path: conn.process_path.clone(),
+                user: conn.user.clone(),
+                connections: Vec::new(),
+                children: Vec::new(),
+                total_threat_score: 0,
+                is_suspicious: false,
+            });
+            
+            entry.connections.push(conn.clone());
+            entry.total_threat_score = entry.total_threat_score.max(conn.threat_score);
+            entry.is_suspicious = entry.is_suspicious || conn.is_suspicious;
+        }
+        
+        // Sort by threat score descending
+        let mut processes: Vec<ProcessTreeItem> = process_map.into_values().collect();
+        processes.sort_by(|a, b| b.total_threat_score.cmp(&a.total_threat_score));
+        processes
+    }
+}
+
 pub struct MonitorState {
     pub connections: Arc<Mutex<Vec<ConnectionItem>>>,
     pub alerts: Arc<Mutex<Vec<String>>>,

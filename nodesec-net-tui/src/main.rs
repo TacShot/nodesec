@@ -1,8 +1,9 @@
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind, MouseEventKind, MouseButton},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
+    execute,
 };
 use ratatui::{
     backend::CrosstermBackend,
@@ -175,12 +176,18 @@ impl App {
             
             // Handle events
             if event::poll(Duration::from_millis(50))? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind == KeyEventKind::Press {
-                        if self.handle_key(key.code).await? {
-                            break;
+                match event::read()? {
+                    Event::Key(key) => {
+                        if key.kind == KeyEventKind::Press {
+                            if self.handle_key(key.code).await? {
+                                break;
+                            }
                         }
                     }
+                    Event::Mouse(mouse) => {
+                        self.handle_mouse(mouse).await?;
+                    }
+                    _ => {}
                 }
             }
             
@@ -241,6 +248,39 @@ impl App {
             _ => {}
         }
         Ok(false)
+    }
+
+    async fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) -> Result<()> {
+        use crossterm::event::{MouseEventKind, MouseButton};
+        
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Handle left-click on tabs or table rows
+                // For now, just handle tab switching via click
+                if mouse.row == 0 {
+                    // Click on tab bar area
+                    let tab_width = 20; // Approximate tab width
+                    let tab_index = mouse.column / tab_width;
+                    self.selected_tab = match tab_index {
+                        0 => Tab::Connections,
+                        1 => Tab::Alerts,
+                        2 => Tab::Statistics,
+                        3 => Tab::Settings,
+                        _ => self.selected_tab,
+                    };
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                if self.scroll_offset > 0 {
+                    self.scroll_offset -= 3;
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                self.scroll_offset += 3;
+            }
+            _ => {}
+        }
+        Ok(())
     }
     
     async fn add_connection(&mut self, conn: NetworkConnection) {
@@ -553,8 +593,8 @@ impl App {
 
 pub async fn run_net_tui(interface: Option<String>, interval: u64) -> Result<()> {
     enable_raw_mode()?;
-    stdout().execute(EnterAlternateScreen)?;
-    
+    execute!(stdout(), EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
+
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
     
@@ -608,19 +648,19 @@ pub async fn run_net_tui(interface: Option<String>, interval: u64) -> Result<()>
     });
     
     let mut app = App::new(rx, Platform::detect());
-    let result = app.run(&mut terminal).await;
-    
-    // Stop monitor
-    {
-        let mut m = monitor.lock().await;
-        let _ = m.stop().await;
+        let result = app.run(&mut terminal).await;
+
+        // Stop monitor
+        {
+            let mut m = monitor.lock().await;
+            let _ = m.stop().await;
+        }
+
+        disable_raw_mode()?;
+        execute!(stdout(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
+
+        result
     }
-    
-    disable_raw_mode()?;
-    stdout().execute(LeaveAlternateScreen)?;
-    
-    result
-}
 
 fn main() -> Result<()> {
     let rt = tokio::runtime::Runtime::new()?;

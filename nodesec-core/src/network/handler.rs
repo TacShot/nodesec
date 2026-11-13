@@ -34,6 +34,9 @@ impl ConnectionHandler {
     pub async fn start(&mut self) -> Result<()> {
         self.monitor.lock().await.start().await?;
 
+        // Do an immediate scan
+        let _ = self.monitor.lock().await.scan_once().await;
+
         // Start periodic scanning
         let events = self.events.clone();
         let threat_detector = self.threat_detector.clone();

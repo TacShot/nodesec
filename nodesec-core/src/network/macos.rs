@@ -107,17 +107,39 @@ impl MacOSNetworkMonitor {
     }
 
     fn parse_addr(&self, addr: &str) -> Result<(IpAddr, u16)> {
-        // Handle both IPv4 (192.168.1.1.80) and IPv6 ([::1].80) formats
+        // Handle various formats from macOS netstat:
+        // IPv4: 192.168.1.1.80
+        // IPv6: ::1.11470 or [::1].80
+        // Wildcard: *.50789 or *.*
+        // IPv4-mapped: 127.0.0.1.53635
+        
+        // Skip wildcard/listening addresses
+        if addr.contains("*") {
+            return Err(anyhow::anyhow!("Wildcard address"));
+        }
+        
         if addr.starts_with('[') {
-            // IPv6
+            // IPv6 with brackets: [::1].80
             let end_bracket = addr.find(']').ok_or_else(|| anyhow::anyhow!("Invalid IPv6 address"))?;
             let ip_str = &addr[1..end_bracket];
             let port_str = &addr[end_bracket+2..]; // Skip "]:"
             let ip = ip_str.parse::<IpAddr>()?;
             let port = port_str.parse::<u16>()?;
             Ok((ip, port))
+        } else if addr.starts_with("::") || addr.contains("::") {
+            // IPv6 without brackets: ::1.11470
+            // Find the last dot which separates IP from port
+            if let Some(last_dot) = addr.rfind('.') {
+                let ip_str = &addr[..last_dot];
+                let port_str = &addr[last_dot+1..];
+                let ip = ip_str.parse::<IpAddr>()?;
+                let port = port_str.parse::<u16>()?;
+                Ok((ip, port))
+            } else {
+                Err(anyhow::anyhow!("Invalid IPv6 address format"))
+            }
         } else {
-            // IPv4
+            // IPv4: 192.168.1.1.80 or 127.0.0.1.53635
             let parts: Vec<&str> = addr.rsplitn(2, '.').collect();
             if parts.len() != 2 {
                 return Err(anyhow::anyhow!("Invalid address format"));

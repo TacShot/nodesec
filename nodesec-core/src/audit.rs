@@ -155,8 +155,8 @@ impl AuditEngine {
             let mut handler = crate::network::handler::ConnectionHandler::new(monitor, 10000, 300);
             tokio::runtime::Runtime::new().unwrap().block_on(async {
                 let _ = handler.start().await;
-                // Wait for collection
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                // Wait for first scan cycle to complete
+                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                 handler.get_recent_connections(1000).await
             })
         };
