@@ -222,6 +222,10 @@ impl NetworkMonitor for MacOSNetworkMonitor {
         *self.running.lock().await = false;
         Ok(())
     }
+    
+    async fn scan_once(&mut self) -> Result<()> {
+        self.scan_connections().await
+    }
 
     fn events(&self) -> Arc<Mutex<VecDeque<NetworkConnection>>> {
         self.events.clone()

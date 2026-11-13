@@ -82,6 +82,11 @@ impl crate::network::common::NetworkMonitor for RemoteNetworkMonitor {
         Ok(())
     }
     
+    async fn scan_once(&mut self) -> Result<()> {
+        // Remote monitor receives events via WebSocket, no local scanning needed
+        Ok(())
+    }
+    
     fn events(&self) -> Arc<Mutex<VecDeque<NetworkConnection>>> {
         self.events.clone()
     }

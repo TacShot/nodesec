@@ -567,24 +567,54 @@ pub async fn run_net_tui(interface: Option<String>, interval: u64) -> Result<()>
         Platform::Unknown => Box::new(LinuxNetworkMonitor::new()),
     };
     
+    // Wrap monitor in Arc<Mutex> for sharing with scan task
+    let monitor = Arc::new(Mutex::new(monitor));
+    
     // Start monitoring
     let (tx, rx) = mpsc::channel(1000);
-    let mut monitor = monitor;
-    let _ = monitor.start().await;
+    {
+        let mut m = monitor.lock().await;
+        let _ = m.start().await;
+    }
     
     // Spawn monitoring task
+    let monitor_clone = monitor.clone();
     let tx_clone = tx.clone();
     tokio::spawn(async move {
         let mut interval_timer = tokio::time::interval(Duration::from_secs(interval));
         loop {
             interval_timer.tick().await;
-            // In a real implementation, this would call monitor.scan_once() 
-            // and send connections through tx_clone
+            
+            // Scan for new connections
+            {
+                let mut m = monitor_clone.lock().await;
+                if let Err(e) = m.scan_once().await {
+                    eprintln!("Scan error: {}", e);
+                }
+            }
+            
+            // Drain events and send to TUI
+            let events = {
+                let m = monitor_clone.lock().await;
+                m.drain_events().await
+            };
+            
+            for event in events {
+                if tx_clone.send(event).await.is_err() {
+                    break; // Channel closed
+                }
+            }
         }
     });
     
     let mut app = App::new(rx, Platform::detect());
     let result = app.run(&mut terminal).await;
+    
+    // Stop monitor
+    {
+        let mut m = monitor.lock().await;
+        let _ = m.stop().await;
+    }
     
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
