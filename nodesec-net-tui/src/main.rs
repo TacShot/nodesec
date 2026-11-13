@@ -637,15 +637,16 @@ impl App {
 
 pub async fn run_net_tui(_interface: Option<String>, interval: u64) -> Result<()> {
     enable_raw_mode()?;
-    execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+    let mut stdout_handle = stdout();
+    execute!(
+        stdout_handle,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        crossterm::event::EnableMouseCapture
+    )?;
 
-    let backend = CrosstermBackend::new(stdout());
+    let backend = CrosstermBackend::new(stdout_handle);
     let mut terminal = Terminal::new(backend)?;
-
-    // Enable SGR 1006 mouse mode for better coordinate reporting
-    print!("\x1b[?1006h");
-    use std::io::Write;
-    std::io::stdout().flush()?;
 
     // Create network monitor
     let platform = Platform::detect();
@@ -720,14 +721,10 @@ pub async fn run_net_tui(_interface: Option<String>, interval: u64) -> Result<()
         let _ = m.stop().await;
     }
 
-    // Disable mouse mode properly - SGR 1006 and default
-    print!("\x1b[?1006l"); // Disable SGR 1006
-    print!("\x1b[?1000l"); // Disable mouse tracking
-    print!("\x1b[?1003l"); // Disable any event mouse tracking
-    std::io::stdout().flush()?;
-
+    // Disable mouse mode properly via crossterm
+    drop(terminal); // Release the backend
     disable_raw_mode()?;
-    execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
 
     result
 }
