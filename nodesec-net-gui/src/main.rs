@@ -1,6 +1,7 @@
 use eframe::egui;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::runtime;
 use nodesec_core::{
     models::{NetworkConnection, Platform},
     network::{common::NetworkMonitor},
@@ -188,36 +189,41 @@ impl eframe::App for App {
 }
 
 pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 800.0])
-            .with_min_inner_size([900.0, 600.0])
-            .with_title("Nodesec Network Monitor"),
-        ..Default::default()
-    };
+    // Create a multi-threaded tokio runtime for async network monitoring
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create tokio runtime");
     
-    let monitor_state = Arc::new(state::MonitorState::new(Platform::detect()));
+    let runtime_handle = runtime.handle().clone();
     
-    let app = App {
-        selected_tab: Tab::Connections,
-        monitor_state,
-        last_update: Instant::now(),
-        monitoring: false,
-    };
-    
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 800.0])
-            .with_min_inner_size([900.0, 600.0])
-            .with_title("Nodesec Network Monitor"),
-        ..Default::default()
-    };
-    
-    eframe::run_native(
-        "Nodesec Network Monitor",
-        options,
-        Box::new(|_cc| Ok(Box::new(app))),
-    ).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+    // Run the GUI within the tokio runtime context
+    runtime.block_on(async {
+        let _guard = runtime_handle.enter();
+        
+        let options = eframe::NativeOptions {
+            viewport: egui::ViewportBuilder::default()
+                .with_inner_size([1200.0, 800.0])
+                .with_min_inner_size([900.0, 600.0])
+                .with_title("Nodesec Network Monitor"),
+            ..Default::default()
+        };
+
+        let monitor_state = Arc::new(state::MonitorState::new(Platform::detect()));
+
+        let app = App {
+            selected_tab: Tab::Connections,
+            monitor_state,
+            last_update: Instant::now(),
+            monitoring: false,
+        };
+
+        eframe::run_native(
+            "Nodesec Network Monitor",
+            options,
+            Box::new(|_cc| Ok(Box::new(app))),
+        ).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+    })
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
