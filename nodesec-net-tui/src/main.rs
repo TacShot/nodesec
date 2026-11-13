@@ -7,7 +7,7 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, Paragraph, Table, Row, Cell, Tabs},
     Frame, Terminal,
@@ -51,6 +51,15 @@ struct ConnectionItem {
     threat_level: ThreatLevel,
 }
 
+impl Clone for ConnectionItem {
+    fn clone(&self) -> Self {
+        Self {
+            connection: self.connection.clone(),
+            threat_level: self.threat_level,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum ThreatLevel {
     Safe,
@@ -65,7 +74,7 @@ impl ThreatLevel {
         match self {
             ThreatLevel::Safe => GREEN,
             ThreatLevel::Low => YELLOW,
-            ThreatLevel::Medium => Color::Rgb(255, 165, 0), // Orange
+            ThreatLevel::Medium => Color::Rgb(255, 165, 0),
             ThreatLevel::High => Color::Rgb(255, 100, 100),
             ThreatLevel::Critical => RED,
         }
@@ -94,9 +103,14 @@ fn threat_level_from_score(score: u8) -> ThreatLevel {
 
 struct App {
     selected_tab: Tab,
-    connections: Arc<Mutex<Vec<ConnectionItem>>>,
-    alerts: Arc<Mutex<Vec<String>>>,
-    stats: Arc<Mutex<ConnectionStats>>,
+    // Async data sources
+    connections_arc: Arc<Mutex<Vec<ConnectionItem>>>,
+    alerts_arc: Arc<Mutex<Vec<String>>>,
+    stats_arc: Arc<Mutex<ConnectionStats>>,
+    // Local cached copies for rendering (no locks needed)
+    connections: Vec<ConnectionItem>,
+    alerts: Vec<String>,
+    stats: ConnectionStats,
     scroll_offset: usize,
     selected_connection: usize,
     running: bool,
@@ -117,11 +131,18 @@ struct ConnectionStats {
 
 impl App {
     fn new(rx: mpsc::Receiver<NetworkConnection>, platform: Platform) -> Self {
+        let connections_arc = Arc::new(Mutex::new(Vec::new()));
+        let alerts_arc = Arc::new(Mutex::new(Vec::new()));
+        let stats_arc = Arc::new(Mutex::new(ConnectionStats::default()));
+        
         Self {
             selected_tab: Tab::Connections,
-            connections: Arc::new(Mutex::new(Vec::new())),
-            alerts: Arc::new(Mutex::new(Vec::new())),
-            stats: Arc::new(Mutex::new(ConnectionStats::default())),
+            connections_arc: connections_arc.clone(),
+            alerts_arc: alerts_arc.clone(),
+            stats_arc: stats_arc.clone(),
+            connections: Vec::new(),
+            alerts: Vec::new(),
+            stats: ConnectionStats::default(),
             scroll_offset: 0,
             selected_connection: 0,
             running: true,
@@ -131,10 +152,20 @@ impl App {
         }
     }
 
+    async fn refresh_data(&mut self) {
+        // Lock and clone data for rendering
+        self.connections = self.connections_arc.lock().await.clone();
+        self.alerts = self.alerts_arc.lock().await.clone();
+        self.stats = self.stats_arc.lock().await.clone();
+    }
+
     async fn run(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
         let mut last_tick = Instant::now();
         
         loop {
+            // Refresh data from async sources
+            self.refresh_data().await;
+            
             terminal.draw(|frame| self.render(frame))?;
             
             // Handle incoming connections
@@ -216,7 +247,7 @@ impl App {
         let threat_level = threat_level_from_score(conn.threat_score);
         let is_suspicious = conn.is_suspicious;
         
-        let mut connections = self.connections.lock().await;
+        let mut connections = self.connections_arc.lock().await;
         connections.insert(0, ConnectionItem {
             connection: conn.clone(),
             threat_level,
@@ -229,7 +260,7 @@ impl App {
         
         // Add alert if suspicious
         if is_suspicious {
-            let mut alerts = self.alerts.lock().await;
+            let mut alerts = self.alerts_arc.lock().await;
             alerts.insert(0, format!(
                 "[{}] {} -> {}:{} (PID: {}, Score: {})",
                 chrono::Local::now().format("%H:%M:%S"),
@@ -245,7 +276,7 @@ impl App {
         }
         
         // Update stats
-        let mut stats = self.stats.lock().await;
+        let mut stats = self.stats_arc.lock().await;
         stats.total += 1;
         if is_suspicious {
             stats.suspicious += 1;
@@ -256,8 +287,8 @@ impl App {
     }
     
     async fn update_stats(&mut self) {
-        let mut stats = self.stats.lock().await;
-        let connections = self.connections.lock().await;
+        let mut stats = self.stats_arc.lock().await;
+        let connections = self.connections_arc.lock().await;
         stats.active = connections.len();
     }
 
@@ -266,10 +297,10 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Header
-                Constraint::Length(3),  // Tabs
-                Constraint::Min(10),    // Content
-                Constraint::Length(3),  // Footer
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Min(10),
+                Constraint::Length(3),
             ])
             .split(area);
 
@@ -291,7 +322,7 @@ impl App {
                 Span::raw("  "),
                 Span::styled(format!("Platform: {:?}", self.platform), Style::default().fg(GRAY)),
                 Span::raw("  "),
-                Span::styled(format!("Connections: {}", self.stats.blocking_lock().total), Style::default().fg(GRAY)),
+                Span::styled(format!("Connections: {}", self.stats.total), Style::default().fg(GRAY)),
             ])
         )
         .alignment(Alignment::Center)
@@ -326,9 +357,7 @@ impl App {
     }
 
     fn render_connections(&mut self, frame: &mut Frame, area: Rect) {
-        let connections = self.connections.blocking_lock();
-        
-        let rows: Vec<Row> = connections
+        let rows: Vec<Row> = self.connections
             .iter()
             .skip(self.scroll_offset)
             .take(area.height as usize - 2)
@@ -390,12 +419,10 @@ impl App {
     }
 
     fn render_alerts(&self, frame: &mut Frame, area: Rect) {
-        let alerts = self.alerts.blocking_lock();
-        
-        let items: Vec<ListItem> = if alerts.is_empty() {
+        let items: Vec<ListItem> = if self.alerts.is_empty() {
             vec![ListItem::new("No alerts")]
         } else {
-            alerts.iter().map(|alert| {
+            self.alerts.iter().map(|alert| {
                 ListItem::new(Line::from(Span::styled(alert, Style::default().fg(RED))))
             }).collect()
         };
@@ -410,30 +437,27 @@ impl App {
     }
 
     fn render_statistics(&self, frame: &mut Frame, area: Rect) {
-        let stats = self.stats.blocking_lock();
-        let connections = self.connections.blocking_lock();
-        
         let mut counts = std::collections::HashMap::new();
-        for item in connections.iter() {
+        for item in &self.connections {
             *counts.entry(item.threat_level).or_insert(0) += 1;
         }
         
         let text = vec![
             Line::from(vec![
                 Span::styled("Total Connections: ", Style::default().fg(ORANGE)),
-                Span::styled(stats.total.to_string(), Style::default().fg(Color::White)),
+                Span::styled(self.stats.total.to_string(), Style::default().fg(Color::White)),
             ]),
             Line::from(vec![
                 Span::styled("Active Connections: ", Style::default().fg(ORANGE)),
-                Span::styled(stats.active.to_string(), Style::default().fg(Color::White)),
+                Span::styled(self.stats.active.to_string(), Style::default().fg(Color::White)),
             ]),
             Line::from(vec![
                 Span::styled("Suspicious: ", Style::default().fg(ORANGE)),
-                Span::styled(stats.suspicious.to_string(), Style::default().fg(RED)),
+                Span::styled(self.stats.suspicious.to_string(), Style::default().fg(RED)),
             ]),
             Line::from(vec![
                 Span::styled("Critical: ", Style::default().fg(ORANGE)),
-                Span::styled(stats.critical.to_string(), Style::default().fg(RED)),
+                Span::styled(self.stats.critical.to_string(), Style::default().fg(RED)),
             ]),
             Line::from(""),
             Line::from(vec![
