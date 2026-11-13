@@ -58,6 +58,73 @@ Cross-platform system and network security platform combining system security au
 - **PATH management**: Auto-adds to shell rc files / Windows user PATH
 - **Uninstall**: `--uninstall` removes binaries, shortcuts, PATH entries
 
+## How It Works
+
+```mermaid
+flowchart TD
+    A["User runs nodesec"] --> B{"Mode Selection"}
+    B -->|"nodesec net live"| C["On-Device Network Monitoring"]
+    B -->|"nodesec net server"| D["SIEM WebSocket Server"]
+    B -->|"nodesec net agents"| E["Manage Endpoint Agents"]
+    B -->|"nodesec audit run"| F["Static Security Audit"]
+    B -->|"nodesec report"| G["View Reports"]
+
+    C --> C1["Detect Platform\nLinux/macOS/Windows"]
+    C1 --> C2["Start NetworkMonitor\n/proc, netstat, ETW"]
+    C2 --> C3["Scan Connections\nEvery 2s interval"]
+    C3 --> C4["ThreatDetector Analysis\nRules + ML Scoring"]
+    C4 --> C5["Real-time TUI/GUI\nLive Connections Table"]
+    C5 --> C6["User Action\nPause/Filter/Export"]
+
+    D --> D1["Start axum WebSocket\n0.0.0.0:8080"]
+    D1 --> D2["Accept Agent Connections"]
+    D2 --> D3["Aggregate Connections\n+ Threat Alerts"]
+    D3 --> D4["Distribute Rules\nto Agents"]
+    D4 --> D5["Dashboard: Agents\n+ Centralized Alerts"]
+
+    E --> E1["Register/Revoke\nAgent Access"]
+    E1 --> E2["Agent Heartbeat\n+ Status Monitor"]
+
+    F --> F1["Detect Target OS\nor --target-os"]
+    F1 --> F2["Load 27 Security Rules\nPlatform-specific"]
+    F2 --> F3["Run Configuration Checks"]
+    F3 --> F4{"--include-cves?"}
+    F4 -->|Yes| F5["Query NIST NVD API 2.0\nCVSS + EPSS"]
+    F4 -->|No| F6["Skip CVE Enrichment"]
+    F5 --> F7{"--scan-apps?"}
+    F6 --> F7
+    F7 -->|Yes| F8["Inventory Apps\n+ CPE Matching"]
+    F7 -->|No| F9{"--collect-logs?"}
+    F8 --> F9
+    F9 -->|Yes| F10["Collect System Logs\njournalctl/EventLog"]
+    F9 -->|No| F11{"--scan-ad?"}
+    F10 --> F11
+    F11 -->|Yes| F12["AD Security Scan\nLDAP/SMB/SSSD"]
+    F11 -->|No| F13{"--generate-remediation?"}
+    F12 --> F13
+    F13 -->|Yes| F14["Write bash/PowerShell\nRemediation Script"]
+    F13 -->|No| F15["Render Report\nText/JSON/CSV"]
+    F14 --> F15
+    F15 --> F16["Export to Desktop\nnodesec-{platform}-{timestamp}/"]
+
+    G --> G1["List/View/Export\nReports"]
+    G1 --> G2["Format: Text/JSON/CSV"]
+
+    %% Installer Flow
+    H["curl install.sh | bash"] --> H1["Detect Platform\n+ Package Manager"]
+    H1 --> H2["Download Binary\nor Build from Source"]
+    H2 --> H3["Install to ~/.local/bin\nor /usr/local/bin"]
+    H3 --> H4["Add to PATH\n+ Create Shortcuts"]
+    H4 --> I["nodesec ready to run"]
+
+    style A fill:#0d252f,stroke:#22d3ee,stroke-width:2px
+    style B fill:#0d252f,stroke:#22d3ee,stroke-width:2px
+    style C fill:#0f1b2a,stroke:#fbbf24,stroke-width:1px,stroke-dasharray: 4 4
+    style D fill:#0f1b2a,stroke:#fbbf24,stroke-width:1px,stroke-dasharray: 4 4
+    style F fill:#0a1f1a,stroke:#34d399,stroke-width:1px
+    style H fill:#1a1405,stroke:#fbbf24,stroke-width:2px
+```
+
 ## Architecture
 
 ```
