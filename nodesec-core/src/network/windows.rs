@@ -1,7 +1,7 @@
 //! Windows network monitoring using GetExtendedTcpTable and ETW
 
-use crate::network::common::{ConnectionEvent, NetworkMonitor};
-use crate::models::{NetworkProtocol, Platform};
+use crate::models::{MonitorMode, NetworkProtocol, Platform};
+use crate::network::common::{NetworkConnection, NetworkMonitor};
 use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -17,7 +17,7 @@ use windows::Win32::Foundation::*;
 use windows::Win32::Networking::WinSock::*;
 
 pub struct WindowsNetworkMonitor {
-    events: Arc<Mutex<VecDeque<ConnectionEvent>>>,
+    events: Arc<Mutex<VecDeque<NetworkConnection>>>,
     running: Arc<Mutex<bool>>,
 }
 
@@ -30,7 +30,7 @@ impl WindowsNetworkMonitor {
     }
 
     async fn scan_connections(&self) -> Result<()> {
-        let _timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64;
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
         #[cfg(target_os = "windows")]
         {
@@ -189,7 +189,7 @@ impl WindowsNetworkMonitor {
     }
 
     #[cfg(target_os = "windows")]
-    fn parse_tcp_row(&self, row: &MIB_TCPROW_OWNER_PID, timestamp: u64, is_v6: bool) -> Result<ConnectionEvent> {
+    fn parse_tcp_row(&self, row: &MIB_TCPROW_OWNER_PID, timestamp: u64, _is_v6: bool) -> Result<NetworkConnection> {
         let src_ip = IpAddr::V4(Ipv4Addr::from(row.dwLocalAddr.to_le_bytes()));
         let dst_ip = IpAddr::V4(Ipv4Addr::from(row.dwRemoteAddr.to_le_bytes()));
         let src_port = u16::from_be(row.dwLocalPort as u16);
@@ -203,7 +203,7 @@ impl WindowsNetworkMonitor {
 
         let (process_name, process_path, command_line, user) = self.get_process_info(pid).await;
 
-        Ok(ConnectionEvent {
+        Ok(NetworkConnection {
             timestamp,
             pid,
             src_ip,
@@ -215,11 +215,13 @@ impl WindowsNetworkMonitor {
             process_path,
             command_line,
             user,
+            threat_score: 0,
+            is_suspicious: false,
         })
     }
 
     #[cfg(target_os = "windows")]
-    fn parse_tcp_row_v6(&self, row: &MIB_TCP6ROW_OWNER_PID, timestamp: u64) -> Result<ConnectionEvent> {
+    fn parse_tcp_row_v6(&self, row: &MIB_TCP6ROW_OWNER_PID, timestamp: u64) -> Result<NetworkConnection> {
         let src_ip = IpAddr::V6(Ipv6Addr::from(row.ucLocalAddr.to_le_bytes()));
         let dst_ip = IpAddr::V6(Ipv6Addr::from(row.ucRemoteAddr.to_le_bytes()));
         let src_port = u16::from_be(row.dwLocalPort as u16);
@@ -232,7 +234,7 @@ impl WindowsNetworkMonitor {
 
         let (process_name, process_path, command_line, user) = self.get_process_info(pid).await;
 
-        Ok(ConnectionEvent {
+        Ok(NetworkConnection {
             timestamp,
             pid,
             src_ip,
@@ -244,11 +246,13 @@ impl WindowsNetworkMonitor {
             process_path,
             command_line,
             user,
+            threat_score: 0,
+            is_suspicious: false,
         })
     }
 
     #[cfg(target_os = "windows")]
-    fn parse_udp_row(&self, row: &MIB_UDPROW_OWNER_PID, timestamp: u64, is_v6: bool) -> Result<ConnectionEvent> {
+    fn parse_udp_row(&self, row: &MIB_UDPROW_OWNER_PID, timestamp: u64, _is_v6: bool) -> Result<NetworkConnection> {
         let src_ip = IpAddr::V4(Ipv4Addr::from(row.dwLocalAddr.to_le_bytes()));
         let dst_ip = IpAddr::V4(Ipv4Addr::from(row.dwRemoteAddr.to_le_bytes()));
         let src_port = u16::from_be(row.dwLocalPort as u16);
@@ -257,7 +261,7 @@ impl WindowsNetworkMonitor {
 
         let (process_name, process_path, command_line, user) = self.get_process_info(pid).await;
 
-        Ok(ConnectionEvent {
+        Ok(NetworkConnection {
             timestamp,
             pid,
             src_ip,
@@ -269,11 +273,13 @@ impl WindowsNetworkMonitor {
             process_path,
             command_line,
             user,
+            threat_score: 0,
+            is_suspicious: false,
         })
     }
 
     #[cfg(target_os = "windows")]
-    fn parse_udp_row_v6(&self, row: &MIB_UDP6ROW_OWNER_PID, timestamp: u64) -> Result<ConnectionEvent> {
+    fn parse_udp_row_v6(&self, row: &MIB_UDP6ROW_OWNER_PID, timestamp: u64) -> Result<NetworkConnection> {
         let src_ip = IpAddr::V6(Ipv6Addr::from(row.ucLocalAddr.to_le_bytes()));
         let dst_ip = IpAddr::V6(Ipv6Addr::from(row.ucRemoteAddr.to_le_bytes()));
         let src_port = u16::from_be(row.dwLocalPort as u16);
@@ -282,7 +288,7 @@ impl WindowsNetworkMonitor {
 
         let (process_name, process_path, command_line, user) = self.get_process_info(pid).await;
 
-        Ok(ConnectionEvent {
+        Ok(NetworkConnection {
             timestamp,
             pid,
             src_ip,
@@ -294,6 +300,8 @@ impl WindowsNetworkMonitor {
             process_path,
             command_line,
             user,
+            threat_score: 0,
+            is_suspicious: false,
         })
     }
 
@@ -366,7 +374,7 @@ impl WindowsNetworkMonitor {
         (process_name, process_path, command_line, user)
     }
 
-    async fn add_event(&self, event: ConnectionEvent) {
+    async fn add_event(&self, event: NetworkConnection) {
         let mut events = self.events.lock().await;
         events.push_back(event);
         while events.len() > 10000 {
@@ -393,12 +401,16 @@ impl NetworkMonitor for WindowsNetworkMonitor {
         Ok(())
     }
 
-    fn events(&self) -> Arc<Mutex<VecDeque<ConnectionEvent>>> {
+    fn events(&self) -> Arc<Mutex<VecDeque<NetworkConnection>>> {
         self.events.clone()
     }
 
     fn platform(&self) -> Platform {
         Platform::Windows
+    }
+
+    fn mode(&self) -> MonitorMode {
+        MonitorMode::OnDevice
     }
 }
 

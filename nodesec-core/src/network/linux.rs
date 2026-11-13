@@ -1,7 +1,7 @@
 //! Linux network monitoring using /proc/net/tcp and netlink sockets
 
-use crate::network::common::{ConnectionEvent, NetworkMonitor};
-use crate::models::{NetworkProtocol, Platform};
+use crate::models::{MonitorMode, NetworkProtocol, Platform};
+use crate::network::common::{NetworkConnection, NetworkMonitor};
 use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::fs;
@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
 
 pub struct LinuxNetworkMonitor {
-    events: Arc<Mutex<VecDeque<ConnectionEvent>>>,
+    events: Arc<Mutex<VecDeque<NetworkConnection>>>,
     running: Arc<Mutex<bool>>,
     pid_cache: Arc<Mutex<std::collections::HashMap<u32, (u32, String, Option<String>, Option<String>, Option<String>)>>>,
 }
@@ -27,7 +27,7 @@ impl LinuxNetworkMonitor {
     }
 
     async fn scan_connections(&self) -> Result<()> {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64;
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
         // Scan TCP connections
         self.scan_tcp_connections(timestamp).await?;
@@ -87,7 +87,7 @@ impl LinuxNetworkMonitor {
         timestamp: u64,
         protocol: NetworkProtocol,
         is_ipv6: bool,
-    ) -> Result<Option<ConnectionEvent>> {
+    ) -> Result<Option<NetworkConnection>> {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 10 {
             return Ok(None);
@@ -112,7 +112,7 @@ impl LinuxNetworkMonitor {
         // Find PID from inode
         let (pid, process_name, process_path, command_line, user) = self.find_process_by_inode(inode).await;
 
-        Ok(Some(ConnectionEvent {
+        Ok(Some(NetworkConnection {
             timestamp,
             pid,
             src_ip,
@@ -124,6 +124,8 @@ impl LinuxNetworkMonitor {
             process_path,
             command_line,
             user,
+            threat_score: 0,
+            is_suspicious: false,
         }))
     }
 
@@ -235,7 +237,7 @@ impl LinuxNetworkMonitor {
         (pid, process_name, process_path, command_line, user)
     }
 
-    async fn add_event(&self, event: ConnectionEvent) {
+    async fn add_event(&self, event: NetworkConnection) {
         let mut events = self.events.lock().await;
         events.push_back(event);
         // Keep only last 10000 events
@@ -275,12 +277,16 @@ impl NetworkMonitor for LinuxNetworkMonitor {
         Ok(())
     }
 
-    fn events(&self) -> Arc<Mutex<VecDeque<ConnectionEvent>>> {
+    fn events(&self) -> Arc<Mutex<VecDeque<NetworkConnection>>> {
         self.events.clone()
     }
 
     fn platform(&self) -> Platform {
         Platform::Linux
+    }
+
+    fn mode(&self) -> MonitorMode {
+        MonitorMode::OnDevice
     }
 }
 

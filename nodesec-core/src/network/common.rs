@@ -1,19 +1,23 @@
 //! Common types for network monitoring
 
-use crate::models::NetworkProtocol;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::VecDeque;
-use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+// Re-export from models
+pub use crate::models::{
+    MonitorMode, NetworkConnection, NetworkProtocol, Platform,
+    WSMessage, AgentInfo, RuleSet, ThreatAlert, DetectionRule,
+};
 
 #[derive(Debug, Clone)]
 pub struct ConnectionEvent {
     pub timestamp: u64,
     pub pid: u32,
-    pub src_ip: IpAddr,
-    pub dst_ip: IpAddr,
+    pub src_ip: std::net::IpAddr,
+    pub dst_ip: std::net::IpAddr,
     pub src_port: u16,
     pub dst_port: u16,
     pub protocol: NetworkProtocol,
@@ -27,6 +31,7 @@ pub struct ConnectionEvent {
 pub trait NetworkMonitor: Send + Sync {
     async fn start(&mut self) -> Result<()>;
     async fn stop(&mut self) -> Result<()>;
-    fn events(&self) -> Arc<Mutex<VecDeque<ConnectionEvent>>>;
-    fn platform(&self) -> crate::models::Platform;
+    fn events(&self) -> Arc<Mutex<VecDeque<NetworkConnection>>>;
+    fn platform(&self) -> Platform;
+    fn mode(&self) -> MonitorMode;
 }

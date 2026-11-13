@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["nodesec-core", "nodesec-cli", "nodesec-tui", "nodesec-gui", "nodesec", "installer"]
+members = ["nodesec-core", "nodesec-cli", "nodesec-tui", "nodesec-gui", "nodesec-net-tui", "nodesec-net-gui", "nodesec-net-server", "nodesec", "installer"]
 exclude = ["target"]
 
 [workspace.package]
@@ -21,6 +21,8 @@ anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["serde", "v4", "fast-rng"] }
 semver = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 # Async & HTTP
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking"] }
@@ -28,6 +30,8 @@ tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "fs", "proce
 axum = { version = "0.7", features = ["ws"] }
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
+tower = { version = "0.4", features = ["limit", "timeout"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
 
 # CLI
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }

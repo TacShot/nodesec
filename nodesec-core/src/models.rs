@@ -40,7 +40,7 @@ pub struct NetworkConnection {
     pub is_suspicious: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Platform {
     Linux,
@@ -333,4 +333,55 @@ pub struct AdFinding {
     pub target: String,
     pub details: String,
     pub remediation: Vec<String>,
+}
+
+// Network monitoring types
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MonitorMode {
+    OnDevice,
+    ClientServer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum WSMessage {
+    ConnectionEvent(NetworkConnection),
+    ThreatAlert(ThreatAlert),
+    RuleUpdate(RuleSet),
+    AgentStatus(AgentInfo),
+    Heartbeat,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentInfo {
+    pub id: String,
+    pub name: String,
+    pub platform: Platform,
+    pub connected_at: u64,
+    pub last_seen: u64,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RuleSet {
+    pub builtin_rules: Vec<DetectionRule>,
+    pub custom_rules: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetectionRule {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub severity: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreatAlert {
+    pub timestamp: u64,
+    pub severity: String,
+    pub message: String,
+    pub connection: Option<NetworkConnection>,
 }

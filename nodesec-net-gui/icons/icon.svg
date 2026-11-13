@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffa500;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#ff8c00;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Shield shape -->
+  <path d="M128 12 L40 12 C17.9 12 0 29.9 0 52 L0 180 C0 210.5 45.5 244 128 244 C210.5 244 256 210.5 256 180 L256 52 C256 29.9 238.1 12 216 12 L128 12 Z" fill="url(#shieldGrad)" stroke="#ff6b00" stroke-width="2"/>
+  <!-- Network nodes -->
+  <circle cx="128" cy="100" r="12" fill="#0d0d0d" stroke="#ffa500" stroke-width="2"/>
+  <circle cx="80" cy="140" r="8" fill="#0d0d0d" stroke="#00ff00" stroke-width="1.5"/>
+  <circle cx="176" cy="140" r="8" fill="#0d0d0d" stroke="#00ff00" stroke-width="1.5"/>
+  <circle cx="128" cy="180" r="8" fill="#0d0d0d" stroke="#00ff00" stroke-width="1.5"/>
+  <!-- Connections -->
+  <line x1="128" y1="112" x2="80" y2="132" stroke="#ffa500" stroke-width="2" opacity="0.7"/>
+  <line x1="128" y1="112" x2="176" y2="132" stroke="#ffa500" stroke-width="2" opacity="0.7"/>
+  <line x1="128" y1="112" x2="128" y2="172" stroke="#ffa500" stroke-width="2" opacity="0.7"/>
+  <!-- Center dot -->
+  <circle cx="128" cy="100" r="4" fill="#ffa500"/>
+</svg>

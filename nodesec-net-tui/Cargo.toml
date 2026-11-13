@@ -1,0 +1,17 @@
+[package]
+name = "nodesec-net-tui"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "Network monitoring TUI for nodesec"
+repository = { workspace = true }
+
+[dependencies]
+nodesec-core = { path = "../nodesec-core" }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+dirs = { workspace = true }

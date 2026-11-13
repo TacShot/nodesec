@@ -1,7 +1,7 @@
 //! macOS network monitoring using libproc and NetworkExtension
 
-use crate::network::common::{ConnectionEvent, NetworkMonitor};
-use crate::models::{NetworkProtocol, Platform};
+use crate::models::{MonitorMode, NetworkProtocol, Platform};
+use crate::network::common::{NetworkConnection, NetworkMonitor};
 use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 pub struct MacOSNetworkMonitor {
-    events: Arc<Mutex<VecDeque<ConnectionEvent>>>,
+    events: Arc<Mutex<VecDeque<NetworkConnection>>>,
     running: Arc<Mutex<bool>>,
 }
 
@@ -23,7 +23,7 @@ impl MacOSNetworkMonitor {
     }
 
     async fn scan_connections(&self) -> Result<()> {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64;
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
         // Use netstat or lsof for connection info on macOS
         self.scan_via_netstat(timestamp).await?;
@@ -63,7 +63,7 @@ impl MacOSNetworkMonitor {
         Ok(())
     }
 
-    async fn parse_netstat_line(&self, line: &str, timestamp: u64, protocol: NetworkProtocol) -> Result<Option<ConnectionEvent>> {
+    async fn parse_netstat_line(&self, line: &str, timestamp: u64, protocol: NetworkProtocol) -> Result<Option<NetworkConnection>> {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 5 {
             return Ok(None);
@@ -89,7 +89,7 @@ impl MacOSNetworkMonitor {
         // Try to get PID using lsof
         let (pid, process_name, process_path, command_line, user) = self.get_process_info(&src_ip, src_port, &dst_ip, dst_port).await;
 
-        Ok(Some(ConnectionEvent {
+        Ok(Some(NetworkConnection {
             timestamp,
             pid,
             src_ip,
@@ -101,6 +101,8 @@ impl MacOSNetworkMonitor {
             process_path,
             command_line,
             user,
+            threat_score: 0,
+            is_suspicious: false,
         }))
     }
 
@@ -194,7 +196,7 @@ impl MacOSNetworkMonitor {
         (pid, process_name, process_path, command_line, user)
     }
 
-    async fn add_event(&self, event: ConnectionEvent) {
+    async fn add_event(&self, event: NetworkConnection) {
         let mut events = self.events.lock().await;
         events.push_back(event);
         while events.len() > 10000 {
@@ -221,12 +223,16 @@ impl NetworkMonitor for MacOSNetworkMonitor {
         Ok(())
     }
 
-    fn events(&self) -> Arc<Mutex<VecDeque<ConnectionEvent>>> {
+    fn events(&self) -> Arc<Mutex<VecDeque<NetworkConnection>>> {
         self.events.clone()
     }
 
     fn platform(&self) -> Platform {
         Platform::MacOS
+    }
+
+    fn mode(&self) -> MonitorMode {
+        MonitorMode::OnDevice
     }
 }
 
