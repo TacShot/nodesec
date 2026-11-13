@@ -385,6 +385,7 @@ mod tests {
             process_findings: vec![],
             system_logs: vec![],
             ad_findings: vec![],
+            network_connections: vec![],
             remediation_path: None,
         }
     }

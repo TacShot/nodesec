@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crate::models::{AuditReport, CheckResult, CheckStatus, Platform, ApplicationFinding, InstalledApplication, LogEntry, AdFinding};
+use crate::models::{AuditReport, CheckResult, CheckStatus, Platform, ApplicationFinding, InstalledApplication, LogEntry, AdFinding, NetworkConnection};
 use crate::checks::get_rules;
 use crate::command_runner::CommandRunner;
 use crate::inventory::{inventory_applications, inventory_running_processes, assess_processes};
@@ -9,6 +9,7 @@ use crate::remediation::write_remediation_script;
 use crate::reporting::export_report_bundle;
 use crate::logs::collect_system_logs;
 use crate::ad::scan_active_directory;
+use crate::network::{linux::LinuxNetworkMonitor, macos::MacOSNetworkMonitor, windows::WindowsNetworkMonitor, common::NetworkMonitor};
 
 pub struct AuditEngine {
     runner: CommandRunner,
@@ -133,6 +134,33 @@ impl AuditEngine {
             vec![]
         };
 
+        // Network monitoring - collect connections with threat analysis
+        let network_connections = {
+            let mut monitor: Box<dyn NetworkMonitor> = match platform {
+                Platform::Linux => Box::new(LinuxNetworkMonitor::new()),
+                Platform::MacOS => Box::new(MacOSNetworkMonitor::new()),
+                Platform::Windows => Box::new(WindowsNetworkMonitor::new()),
+                Platform::Unknown => Box::new(LinuxNetworkMonitor::new()), // fallback
+            };
+            
+            // Start monitoring
+            let _ = tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let _ = monitor.start().await;
+            });
+            
+            // Wait briefly to collect connections
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            
+            // Get recent connections
+            let mut handler = crate::network::handler::ConnectionHandler::new(monitor, 10000, 300);
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let _ = handler.start().await;
+                // Wait for collection
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                handler.get_recent_connections(1000).await
+            })
+        };
+
         // Generate remediation script
         let failed_results: Vec<CheckResult> = results.iter()
             .filter_map(|(_, r)| if r.status == CheckStatus::Fail { Some(r.clone()) } else { None })
@@ -161,6 +189,7 @@ impl AuditEngine {
             process_findings,
             system_logs,
             ad_findings,
+            network_connections,
             remediation_path: remediation_path.clone(),
         };
 

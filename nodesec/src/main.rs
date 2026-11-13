@@ -1,8 +1,9 @@
 use clap::{Parser, Subcommand};
 use anyhow::Result;
+use std::process::Command;
 
 #[derive(Parser, Debug)]
-#[command(name = "hyntel", version, about = "Cross-platform security audit tool")]
+#[command(name = "nodesec", version, about = "Cross-platform System & Network Security Platform")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -11,7 +12,7 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Run audit with CLI arguments
-    Run(hyntel_cli::Args),
+    Run(nodesec_cli::Args),
     /// Launch terminal UI
     Tui,
     /// Launch graphical UI
@@ -24,13 +25,26 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Run(args) => {
             // Use the CLI crate's main logic
-            hyntel_cli::run_with_args(args)
+            nodesec_cli::run_with_args(args)?
         }
         Commands::Tui => {
-            hyntel_tui::run_tui()
+            let status = Command::new("cargo")
+                .args(["run", "--bin", "nodesec-tui"])
+                .current_dir("/Users/tac/nodesec")
+                .status()?;
+            if !status.success() {
+                anyhow::bail!("TUI exited with error");
+            }
         }
         Commands::Gui => {
-            hyntel_gui::main()
+            let status = Command::new("cargo")
+                .args(["run", "--bin", "nodesec-gui"])
+                .current_dir("/Users/tac/nodesec")
+                .status()?;
+            if !status.success() {
+                anyhow::bail!("GUI exited with error");
+            }
         }
     }
+    Ok(())
 }

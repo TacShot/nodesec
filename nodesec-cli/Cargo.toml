@@ -6,6 +6,14 @@ license = { workspace = true }
 description = "Command-line interface for nodesec"
 repository = { workspace = true }
 
+[lib]
+name = "nodesec_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nodesec-cli"
+path = "src/main.rs"
+
 [dependencies]
 nodesec-core = { path = "../nodesec-core" }
 clap = { workspace = true }

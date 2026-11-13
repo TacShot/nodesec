@@ -268,6 +268,7 @@ pub struct AuditReport {
     pub process_findings: Vec<ProcessFinding>,
     pub system_logs: Vec<LogEntry>,
     pub ad_findings: Vec<AdFinding>,
+    pub network_connections: Vec<NetworkConnection>,
     pub remediation_path: Option<String>,
 }
 
