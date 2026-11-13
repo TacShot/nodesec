@@ -1,0 +1,74 @@
+[package]
+name = "nodesec-core"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "Core system & network security audit logic"
+repository = { workspace = true }
+
+[dependencies]
+# Core
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_urlencoded = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+semver = { workspace = true }
+
+# HTTP & Async
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["process", "fs", "net", "sync", "macros", "rt-multi-thread"] }
+axum = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+
+# Platform & Process
+sysinfo = { workspace = true }
+which = { workspace = true }
+dirs = { workspace = true }
+
+# Network monitoring
+socket2 = { workspace = true }
+async-trait = { workspace = true }
+
+# Threat detection & ML
+linfa = { workspace = true }
+smartcore = { workspace = true }
+ndarray = { workspace = true }
+maxminddb = { workspace = true }
+ipnetwork = { workspace = true }
+
+# Crypto for parent-child mode
+ring = { workspace = true }
+rsa = { workspace = true }
+rand = { workspace = true }
+zeroize = { workspace = true }
+
+# Platform-specific (defined inline since workspace doesn't support target sections)
+[target.'cfg(target_os = "linux")'.dependencies]
+libbpf-rs = { version = "0.24", features = ["default"] }
+libbpf-sys = "1.4"
+nix = "0.28"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2.10"
+libc = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_System_Diagnostics_Etw",
+    "Win32_Networking_WinSock",
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_SystemServices",
+    "Win32_Security",
+] }
+etw = "0.0.1"
+
+# Testing
+tempfile = { workspace = true }
+predicates = { workspace = true }
+assert_cmd = { workspace = true }

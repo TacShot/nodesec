@@ -1,0 +1,16 @@
+[package]
+name = "nodesec"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "nodesec - Cross-platform System & Network Security Platform - main binary"
+repository = { workspace = true }
+
+[dependencies]
+nodesec-core = { path = "../nodesec-core" }
+nodesec-cli = { path = "../nodesec-cli" }
+nodesec-tui = { path = "../nodesec-tui" }
+nodesec-gui = { path = "../nodesec-gui" }
+clap = { workspace = true, features = ["derive"] }
+anyhow = { workspace = true }
+tokio = { workspace = true }

@@ -1,0 +1,44 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts
+*.d
+*.dSYM/
+artifacts/
+
+# Portable builds
+*portable/
+*portable.zip
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Keys/certs (for parent-child mode)
+keys/
+*.pem
+*.key
+*.crt
+
+# node_modules (for GUI frontend)
+node_modules/
+
+# Tauri build artifacts
+/target/release/bundle/
+/target/release/deps/
