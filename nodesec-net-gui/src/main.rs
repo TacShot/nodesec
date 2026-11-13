@@ -14,9 +14,9 @@ mod monitor;
 mod ui;
 mod graph;
 
-use crate::state::{MonitorState, ThreatLevel, ConnectionItem, ProcessTreeItem};
+use crate::state::{MonitorState, ThreatLevel, ConnectionItem, ProcessTreeItem, FilterSettings};
 use crate::monitor::{start_monitoring, stop_monitoring};
-use crate::ui::{render_connections_table, render_alerts, render_statistics, render_settings, render_dashboard, render_process_tree, render_connection_graph, stat_card};
+use crate::ui::{render_connections_table, render_alerts, render_statistics, render_settings, render_dashboard, render_process_tree, render_connection_graph, render_connection_detail, stat_card};
 use crate::graph::ConnectionGraph;
 
 // Colors matching 7-color palette
@@ -66,6 +66,7 @@ struct App {
     threat_history: Arc<Mutex<VecDeque<(f64, u8)>>>, // (timestamp, avg threat)
     selected_connection: Option<usize>,
     graph: ConnectionGraph,
+    filter: FilterSettings,
 }
 
 impl App {
@@ -79,6 +80,7 @@ impl App {
             threat_history: Arc::new(Mutex::new(VecDeque::with_capacity(300))),
             selected_connection: None,
             graph: ConnectionGraph::new(),
+            filter: FilterSettings::default(),
         }
     }
     
@@ -163,10 +165,10 @@ impl App {
             
             ui.separator();
             
-            // Filter
-            ui.label("Filter:");
-            let mut filter = String::new();
-            ui.text_edit_singleline(&mut filter);
+            // Filter status
+            if !self.filter.process_name.is_empty() || self.filter.pid.is_some() || self.filter.only_suspicious {
+                ui.label(egui::RichText::new("Filters Active").color(YELLOW));
+            }
             
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("💾 Export").clicked() {
@@ -177,37 +179,24 @@ impl App {
         
         ui.separator();
         
-        // Connections table
+        // Connections table with filter
         let connections = self.monitor_state.connections.lock().unwrap();
         
         egui::ScrollArea::vertical().show(ui, |ui| {
-            crate::ui::render_connections_table(ui, &connections, &mut self.selected_connection);
+            crate::ui::render_connections_table(ui, &connections, &mut self.selected_connection, &mut self.filter);
         });
         
         // Detail panel for selected connection
         if let Some(idx) = self.selected_connection {
             if idx < connections.len() {
                 ui.separator();
-                ui.heading("Connection Details");
-                let conn = &connections[idx].connection;
-                egui::Grid::new("conn_details").num_columns(2).show(ui, |ui| {
-                    detail_row(ui, "PID", &conn.pid.to_string());
-                    detail_row(ui, "Process", &conn.process_name);
-                    detail_row(ui, "Path", conn.process_path.as_deref().unwrap_or("N/A"));
-                    detail_row(ui, "Command", conn.command_line.as_deref().unwrap_or("N/A"));
-                    detail_row(ui, "User", conn.user.as_deref().unwrap_or("N/A"));
-                    detail_row(ui, "Protocol", &format!("{:?}", conn.protocol));
-                    detail_row(ui, "Source", &format!("{}:{}", conn.src_ip, conn.src_port));
-                    detail_row(ui, "Destination", &format!("{}:{}", conn.dst_ip, conn.dst_port));
-                    detail_row(ui, "Threat Score", &conn.threat_score.to_string());
-                    detail_row(ui, "Suspicious", &conn.is_suspicious.to_string());
-                });
+                crate::ui::render_connection_detail(ui, &connections[idx], &self.monitor_state);
             }
         }
     }
     
     fn render_process_tree(&mut self, ui: &mut egui::Ui) {
-        crate::ui::render_process_tree(ui, &self.monitor_state);
+        crate::ui::render_process_tree(ui, &self.monitor_state, &mut self.filter);
     }
     
     fn render_connection_graph(&mut self, ui: &mut egui::Ui) {
@@ -226,7 +215,7 @@ impl App {
     }
     
     fn render_settings(&mut self, ui: &mut egui::Ui) {
-        crate::ui::render_settings(ui, self.monitor_state.platform);
+        crate::ui::render_settings(ui, self.monitor_state.platform, &self.monitor_state);
     }
 }
 
@@ -392,6 +381,7 @@ pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
             threat_history: Arc::new(Mutex::new(VecDeque::with_capacity(300))),
             selected_connection: None,
             graph: ConnectionGraph::new(),
+            filter: FilterSettings::default(),
         };
         
         eframe::run_native(

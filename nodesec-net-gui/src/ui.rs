@@ -1,6 +1,7 @@
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints};
-use crate::state::{ConnectionItem, ThreatLevel, ConnectionStats, ProcessTreeItem, ThreatLevel::*};
+use crate::state::{ConnectionItem, ThreatLevel, ConnectionStats, ProcessTreeItem, FilterSettings, ActionLogEntry, IgnoreRule, ScanSettings, ThreatLevel::*};
+use crate::graph::ConnectionType;
 use nodesec_core::models::NetworkConnection;
 use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
@@ -14,6 +15,7 @@ const WHITE: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
 const BLACK: egui::Color32 = egui::Color32::from_rgb(0, 0, 0);
 const GRAY: egui::Color32 = egui::Color32::from_rgb(136, 136, 136);
 const PANEL_BG: egui::Color32 = egui::Color32::from_rgb(45, 45, 45);
+const DARK_BG: egui::Color32 = egui::Color32::from_rgb(30, 30, 30);
 
 pub fn stat_card(ui: &mut egui::Ui, label: &str, value: &str, color: egui::Color32) {
     ui.group(|ui| {
@@ -28,7 +30,60 @@ pub fn render_connections_table(
     ui: &mut egui::Ui,
     connections: &[ConnectionItem],
     selected_connection: &mut Option<usize>,
+    filter: &mut FilterSettings,
 ) {
+    // Filter panel
+    ui.group(|ui| {
+        ui.heading(egui::RichText::new("Filters").color(ORANGE).size(14.0));
+        ui.horizontal(|ui| {
+            ui.label("Process:");
+            ui.text_edit_singleline(&mut filter.process_name);
+            
+            ui.separator();
+            ui.label("PID:");
+            let mut pid_str = filter.pid.map(|p| p.to_string()).unwrap_or_default();
+            if ui.text_edit_singleline(&mut pid_str).changed() {
+                filter.pid = pid_str.parse().ok();
+            }
+            
+            ui.separator();
+            ui.label("Min Threat:");
+            let mut min_str = filter.min_threat_score.to_string();
+            if ui.text_edit_singleline(&mut min_str).changed() {
+                filter.min_threat_score = min_str.parse().unwrap_or(0);
+            }
+            
+            ui.separator();
+            ui.label("Max Threat:");
+            let mut max_str = filter.max_threat_score.to_string();
+            if ui.text_edit_singleline(&mut max_str).changed() {
+                filter.max_threat_score = max_str.parse().unwrap_or(100);
+            }
+            
+            ui.separator();
+            ui.checkbox(&mut filter.only_suspicious, "Suspicious Only");
+            
+            ui.separator();
+            egui::ComboBox::from_label("Protocol")
+                .selected_text(match &filter.protocol {
+                    Some(p) => format!("{:?}", p),
+                    None => "All".to_string(),
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut filter.protocol, None, "All");
+                    ui.selectable_value(&mut filter.protocol, Some(nodesec_core::models::NetworkProtocol::Tcp), "TCP");
+                    ui.selectable_value(&mut filter.protocol, Some(nodesec_core::models::NetworkProtocol::Udp), "UDP");
+                });
+            
+            if ui.button("Clear Filters").clicked() {
+                *filter = FilterSettings::default();
+            }
+        });
+    });
+    
+    ui.separator();
+    
+    // Connections table
     egui::ScrollArea::vertical().show(ui, |ui| {
         egui::Grid::new("connections_table")
             .striped(true)
@@ -46,6 +101,10 @@ pub fn render_connections_table(
                 ui.end_row();
                 
                 for (i, item) in connections.iter().enumerate() {
+                    if !filter.matches(item) {
+                        continue;
+                    }
+                    
                     let conn = &item.connection;
                     let threat_color = item.threat_level.color();
                     
@@ -77,6 +136,198 @@ pub fn render_connections_table(
                     ui.end_row();
                 }
             });
+    });
+}
+
+pub fn render_connection_detail(
+    ui: &mut egui::Ui,
+    item: &ConnectionItem,
+    monitor_state: &crate::state::MonitorState,
+) {
+    let conn = &item.connection;
+    
+    ui.group(|ui| {
+        ui.heading(egui::RichText::new("Connection Details").color(ORANGE));
+        ui.separator();
+        
+        egui::Grid::new("conn_detail").num_columns(2).show(ui, |ui| {
+            detail_row(ui, "PID", &conn.pid.to_string());
+            detail_row(ui, "Process", &conn.process_name);
+            detail_row(ui, "Path", conn.process_path.as_deref().unwrap_or("N/A"));
+            detail_row(ui, "Command", conn.command_line.as_deref().unwrap_or("N/A"));
+            detail_row(ui, "User", conn.user.as_deref().unwrap_or("N/A"));
+            detail_row(ui, "Protocol", &format!("{:?}", conn.protocol));
+            detail_row(ui, "Source", &format!("{}:{}", conn.src_ip, conn.src_port));
+            detail_row(ui, "Destination", &format!("{}:{}", conn.dst_ip, conn.dst_port));
+            detail_row(ui, "Threat Score", &conn.threat_score.to_string());
+            detail_row(ui, "Suspicious", &conn.is_suspicious.to_string());
+            detail_row(ui, "Timestamp", &chrono::DateTime::from_timestamp(conn.timestamp as i64, 0)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_default());
+        });
+        
+        ui.separator();
+        ui.horizontal(|ui| {
+            // Firewall actions
+            if ui.button("🔴 Terminate Process").clicked() {
+                terminate_process(conn.pid, &conn.process_name, monitor_state);
+            }
+            
+            if ui.button("🚫 Block Port").clicked() {
+                block_port(conn.dst_port, conn.pid, &conn.process_name, monitor_state);
+            }
+            
+            if ui.button("🛡️ Allow Port").clicked() {
+                allow_port(conn.dst_port, conn.pid, &conn.process_name, monitor_state);
+            }
+            
+            if ui.button("🚫 Block IP").clicked() {
+                block_ip(&conn.dst_ip.to_string(), conn.pid, &conn.process_name, monitor_state);
+            }
+        });
+    });
+}
+
+fn detail_row(ui: &mut egui::Ui, label: &str, value: &str) {
+    ui.label(egui::RichText::new(label).color(GRAY).size(12.0));
+    ui.label(egui::RichText::new(value).color(WHITE).size(12.0));
+}
+
+fn terminate_process(pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .output();
+    }
+    
+    monitor_state.add_action_log(crate::state::ActionLogEntry {
+        timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        action: crate::state::ActionType::Terminate,
+        pid,
+        process_name: process_name.to_string(),
+        port: None,
+        ip: None,
+        rule: "SIGKILL".to_string(),
+        success: true,
+        details: format!("Terminated process {} (PID: {})", process_name, pid),
+    });
+}
+
+fn block_port(port: u16, pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
+    #[cfg(target_os = "macos")]
+    {
+        let rule = format!("block out proto tcp from any to any port {}", port);
+        let _ = std::process::Command::new("pfctl")
+            .args(["-a", "nodesec", "-f", "-"])
+            .stdin(std::process::Stdio::piped())
+            .output();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("iptables")
+            .args(["-A", "OUTPUT", "-p", "tcp", "--dport", &port.to_string(), "-j", "DROP"])
+            .output();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("netsh")
+            .args(["advfirewall", "firewall", "add", "rule", 
+                   "name=Nodesec_Block_Port", "dir=out", "action=block", "protocol=TCP", &format!("remoteport={}", port)])
+            .output();
+    }
+    
+    monitor_state.add_action_log(crate::state::ActionLogEntry {
+        timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        action: crate::state::ActionType::BlockPort,
+        pid,
+        process_name: process_name.to_string(),
+        port: Some(port),
+        ip: None,
+        rule: format!("Block port {}", port),
+        success: true,
+        details: format!("Blocked port {} for process {}", port, process_name),
+    });
+}
+
+fn allow_port(port: u16, pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("pfctl")
+            .args(["-a", "nodesec", "-F", "rules"])
+            .output();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("iptables")
+            .args(["-D", "OUTPUT", "-p", "tcp", "--dport", &port.to_string(), "-j", "DROP"])
+            .output();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("netsh")
+            .args(["advfirewall", "firewall", "delete", "rule", 
+                   "name=Nodesec_Block_Port", "dir=out", "protocol=TCP", &format!("remoteport={}", port)])
+            .output();
+    }
+    
+    monitor_state.add_action_log(crate::state::ActionLogEntry {
+        timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        action: crate::state::ActionType::AllowPort,
+        pid,
+        process_name: process_name.to_string(),
+        port: Some(port),
+        ip: None,
+        rule: format!("Allow port {}", port),
+        success: true,
+        details: format!("Allowed port {} for process {}", port, process_name),
+    });
+}
+
+fn block_ip(ip: &str, pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("pfctl")
+            .args(["-a", "nodesec", "-f", "-"])
+            .stdin(std::process::Stdio::piped())
+            .output();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("iptables")
+            .args(["-A", "OUTPUT", "-d", ip, "-j", "DROP"])
+            .output();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("netsh")
+            .args(["advfirewall", "firewall", "add", "rule", 
+                   "name=Nodesec_Block_IP", "dir=out", "action=block", &format!("remoteip={}", ip)])
+            .output();
+    }
+    
+    monitor_state.add_action_log(crate::state::ActionLogEntry {
+        timestamp: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        action: crate::state::ActionType::BlockIP,
+        pid,
+        process_name: process_name.to_string(),
+        port: None,
+        ip: Some(ip.to_string()),
+        rule: format!("Block IP {}", ip),
+        success: true,
+        details: format!("Blocked IP {} for process {}", ip, process_name),
     });
 }
 
@@ -147,29 +398,196 @@ pub fn render_statistics(
 pub fn render_settings(
     ui: &mut egui::Ui,
     platform: nodesec_core::models::Platform,
+    monitor_state: &crate::state::MonitorState,
 ) {
     ui.heading(egui::RichText::new("Network Monitoring Settings").color(ORANGE).strong());
     ui.separator();
     
-    egui::Grid::new("settings_grid").num_columns(2).show(ui, |ui| {
+    // Scan Settings
+    ui.heading(egui::RichText::new("Scan Configuration").color(ORANGE));
+    {
+        let mut settings = monitor_state.scan_settings.lock().unwrap();
+        
+        egui::Grid::new("scan_settings").num_columns(2).show(ui, |ui| {
+            ui.label("Scan Interval (seconds):");
+            ui.add(egui::DragValue::new(&mut settings.scan_interval_seconds).range(1..=60).speed(0.5));
+            ui.end_row();
+            
+            ui.label("Max Connections:");
+            ui.add(egui::DragValue::new(&mut settings.max_connections).range(100..=10000).speed(10.0));
+            ui.end_row();
+            
+            ui.label("Retention (seconds):");
+            ui.add(egui::DragValue::new(&mut settings.retention_seconds).range(60..=3600).speed(10.0));
+            ui.end_row();
+            
+            ui.label("Threat Threshold:");
+            ui.add(egui::DragValue::new(&mut settings.threat_threshold).range(0..=100).speed(1.0));
+            ui.end_row();
+            
+            ui.label("Auto Refresh:");
+            ui.checkbox(&mut settings.auto_refresh, "");
+            ui.end_row();
+        });
+    }
+    
+    ui.separator();
+    
+    // Ignore Rules
+    ui.heading(egui::RichText::new("Ignore Rules").color(ORANGE));
+    {
+        let mut settings = monitor_state.scan_settings.lock().unwrap();
+        
+        ui.horizontal(|ui| {
+            ui.label("Add Ignore Rule:");
+            if ui.button("Process Name").clicked() {
+                settings.ignore_rules.push(crate::state::IgnoreRule {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    process_name: Some("".to_string()),
+                    pid: None,
+                    port: None,
+                    ip: None,
+                    protocol: None,
+                    created: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                    description: "Ignore by process name".to_string(),
+                });
+            }
+            
+            if ui.button("PID").clicked() {
+                settings.ignore_rules.push(crate::state::IgnoreRule {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    process_name: None,
+                    pid: Some(0),
+                    port: None,
+                    ip: None,
+                    protocol: None,
+                    created: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                    description: "Ignore by PID".to_string(),
+                });
+            }
+            
+            if ui.button("Port").clicked() {
+                settings.ignore_rules.push(crate::state::IgnoreRule {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    process_name: None,
+                    pid: None,
+                    port: Some(0),
+                    ip: None,
+                    protocol: None,
+                    created: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                    description: "Ignore by port".to_string(),
+                });
+            }
+            
+            if ui.button("IP Address").clicked() {
+                settings.ignore_rules.push(crate::state::IgnoreRule {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    process_name: None,
+                    pid: None,
+                    port: None,
+                    ip: Some("".to_string()),
+                    protocol: None,
+                    created: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                    description: "Ignore by IP".to_string(),
+                });
+            }
+        });
+        
+        // Display ignore rules
+        let mut to_remove = Vec::new();
+        for (i, rule) in settings.ignore_rules.iter().enumerate() {
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(&rule.description).color(WHITE));
+                    ui.label(egui::RichText::new(&rule.created).color(GRAY).size(10.0));
+                    
+                    if let Some(name) = &rule.process_name {
+                        ui.label(format!("Process: {}", name));
+                    }
+                    if let Some(pid) = rule.pid {
+                        if pid > 0 {
+                            ui.label(format!("PID: {}", pid));
+                        }
+                    }
+                    if let Some(port) = rule.port {
+                        if port > 0 {
+                            ui.label(format!("Port: {}", port));
+                        }
+                    }
+                    if let Some(ip) = &rule.ip {
+                        if !ip.is_empty() {
+                            ui.label(format!("IP: {}", ip));
+                        }
+                    }
+                    if let Some(proto) = &rule.protocol {
+                        ui.label(format!("Protocol: {:?}", proto));
+                    }
+                    
+                    if ui.button("🗑 Remove").clicked() {
+                        to_remove.push(i);
+                    }
+                });
+            });
+        }
+        
+        // Remove marked rules
+        for &i in to_remove.iter().rev() {
+            settings.ignore_rules.remove(i);
+        }
+    }
+    
+    ui.separator();
+    
+    // Action Log
+    ui.heading(egui::RichText::new("Action Log").color(ORANGE));
+    ui.horizontal(|ui| {
+        if ui.button("Export Log").clicked() {
+            let log = monitor_state.action_log.lock().unwrap();
+            let json = serde_json::to_string_pretty(&*log).unwrap_or_default();
+            let _ = std::fs::write("nodesec_action_log.json", json);
+        }
+        if ui.button("Clear Log").clicked() {
+            monitor_state.action_log.lock().unwrap().clear();
+        }
+    });
+    
+    let log = monitor_state.action_log.lock().unwrap();
+    egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+        egui::Grid::new("action_log").num_columns(6).striped(true).show(ui, |ui| {
+            ui.label(egui::RichText::new("Time").color(ORANGE).strong());
+            ui.label(egui::RichText::new("Action").color(ORANGE).strong());
+            ui.label(egui::RichText::new("Process").color(ORANGE).strong());
+            ui.label(egui::RichText::new("PID").color(ORANGE).strong());
+            ui.label(egui::RichText::new("Details").color(ORANGE).strong());
+            ui.label(egui::RichText::new("Success").color(ORANGE).strong());
+            ui.end_row();
+            
+            for entry in log.iter() {
+                let action_color = match entry.action {
+                    crate::state::ActionType::Terminate => RED,
+                    crate::state::ActionType::BlockPort | crate::state::ActionType::BlockIP => YELLOW,
+                    crate::state::ActionType::AllowPort | crate::state::ActionType::AllowIP => GREEN,
+                    _ => WHITE,
+                };
+                
+                ui.label(&entry.timestamp);
+                ui.colored_label(action_color, format!("{:?}", entry.action));
+                ui.label(&entry.process_name);
+                ui.label(entry.pid.to_string());
+                ui.label(&entry.details);
+                ui.colored_label(if entry.success { GREEN } else { RED }, 
+                    if entry.success { "✓" } else { "✗" });
+                ui.end_row();
+            }
+        });
+    });
+    
+    ui.separator();
+    
+    // Platform info
+    egui::Grid::new("platform_info").num_columns(2).show(ui, |ui| {
         ui.label("Platform:");
         ui.label(format!("{:?}", platform));
-        ui.end_row();
-        
-        ui.label("Update Interval:");
-        ui.label("2 seconds");
-        ui.end_row();
-        
-        ui.label("Threat Threshold:");
-        ui.label("50");
-        ui.end_row();
-        
-        ui.label("Max Connections:");
-        ui.label("1000");
-        ui.end_row();
-        
-        ui.label("Retention:");
-        ui.label("5 minutes");
         ui.end_row();
     });
     
@@ -303,7 +721,7 @@ pub fn render_dashboard(
     });
 }
 
-pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::MonitorState) {
+pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::MonitorState, filter: &mut FilterSettings) {
     let connections = monitor_state.connections.lock().unwrap();
     let processes = ProcessTreeItem::from_connections(&connections);
     
@@ -319,6 +737,29 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
     
     egui::ScrollArea::vertical().show(ui, |ui| {
         for proc in processes {
+            // Apply filter
+            let mut matches = true;
+            if !filter.process_name.is_empty() {
+                if !proc.name.to_lowercase().contains(&filter.process_name.to_lowercase()) {
+                    matches = false;
+                }
+            }
+            if let Some(pid) = filter.pid {
+                if proc.pid != pid {
+                    matches = false;
+                }
+            }
+            if filter.only_suspicious && !proc.is_suspicious {
+                matches = false;
+            }
+            if proc.total_threat_score < filter.min_threat_score || proc.total_threat_score > filter.max_threat_score {
+                matches = false;
+            }
+            
+            if !matches {
+                continue;
+            }
+            
             let threat_color = match proc.total_threat_score {
                 0..=25 => GREEN,
                 26..=49 => YELLOW,
@@ -387,4 +828,47 @@ pub fn render_connection_graph(ui: &mut egui::Ui, graph: &mut crate::graph::Conn
     
     let rect = ui.available_rect_before_wrap();
     graph.render(ui, rect);
+    
+    // Selected node detail
+    if let Some(node) = graph.get_selected() {
+        ui.separator();
+        ui.group(|ui| {
+            ui.heading(egui::RichText::new("Node Details").color(ORANGE));
+            ui.separator();
+            
+            egui::Grid::new("node_detail").num_columns(2).show(ui, |ui| {
+                detail_row(ui, "ID", &node.id);
+                detail_row(ui, "Label", &node.label);
+                detail_row(ui, "Type", if node.is_process { "Process" } else { "Host" });
+                if let Some(pid) = node.pid {
+                    detail_row(ui, "PID", &pid.to_string());
+                }
+                detail_row(ui, "Process", &node.process_name);
+                if let Some(iface) = &node.interface {
+                    detail_row(ui, "Interface/Type", iface);
+                }
+                if let Some(ip) = &node.remote_ip {
+                    detail_row(ui, "Remote IP", ip);
+                }
+                if let Some(port) = node.remote_port {
+                    detail_row(ui, "Remote Port", &port.to_string());
+                }
+                detail_row(ui, "Connections", &node.connections.to_string());
+                detail_row(ui, "Threat Score", &node.threat_score.to_string());
+            });
+            
+            if node.is_process {
+                ui.horizontal(|ui| {
+                    if ui.button("🔴 Terminate").clicked() {
+                        if let Some(pid) = node.pid {
+                            terminate_process(pid, &node.process_name, &crate::state::MonitorState::new(nodesec_core::models::Platform::detect()));
+                        }
+                    }
+                    if ui.button("🚫 Block All Ports").clicked() {
+                        // Block all ports for this process
+                    }
+                });
+            }
+        });
+    }
 }
