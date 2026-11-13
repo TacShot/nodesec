@@ -14,7 +14,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, Table, Row, Cell, Tabs},
     Frame, Terminal,
 };
-use std::io::{stdout, Stdout};
+use std::io::{stdout, Stdout, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
@@ -123,6 +123,8 @@ struct App {
     tabs_area: Rect,
     table_area: Rect,
     header_area: Rect,
+    // Pre-calculated tab click regions (x_start, x_end) for each tab
+    tab_regions: [Option<(u16, u16)>; 4],
 }
 
 #[derive(Default, Clone)]
@@ -158,6 +160,7 @@ impl App {
             tabs_area: Rect::default(),
             table_area: Rect::default(),
             header_area: Rect::default(),
+            tab_regions: [None; 4],
         }
     }
 
@@ -272,38 +275,42 @@ impl App {
     }
 
     async fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) -> Result<()> {
-        use crossterm::event::{MouseEventKind, MouseButton};
-        
-        let mouse_col = mouse.column as u16;
-        let mouse_row = mouse.row as u16;
-        
-        match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                // Check tab bar clicks
-                if self.tabs_area.contains((mouse_col, mouse_row).into()) {
-                    let tab_width = (self.tabs_area.width / 4).max(1);
-                    let relative_x = mouse_col.saturating_sub(self.tabs_area.x);
-                    let tab_index = ((relative_x / tab_width) as usize).min(3);
-                    self.selected_tab = match tab_index {
-                        0 => Tab::Connections,
-                        1 => Tab::Alerts,
-                        2 => Tab::Statistics,
-                        3 => Tab::Settings,
-                        _ => self.selected_tab,
-                    };
-                }
-                // Check table row clicks (Connections tab only)
-                else if self.selected_tab == Tab::Connections && self.table_area.contains((mouse_col, mouse_row).into()) {
-                    // Table has header at row 0, data starts at row 1 within table_area
-                    let relative_y = mouse_row.saturating_sub(self.table_area.y);
-                    if relative_y >= 1 {
-                        let row_index = (relative_y - 1) as usize + self.scroll_offset;
-                        if row_index < self.connections.len() {
-                            self.selected_connection = row_index;
+            use crossterm::event::{MouseEventKind, MouseButton};
+
+            let mouse_col = mouse.column as u16;
+            let mouse_row = mouse.row as u16;
+
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    // Check tab bar clicks using pre-calculated regions
+                    if self.tabs_area.contains((mouse_col, mouse_row).into()) {
+                        for (i, region) in self.tab_regions.iter().enumerate() {
+                            if let Some((x_start, x_end)) = region {
+                                if mouse_col >= *x_start && mouse_col < *x_end {
+                                    self.selected_tab = match i {
+                                        0 => Tab::Connections,
+                                        1 => Tab::Alerts,
+                                        2 => Tab::Statistics,
+                                        3 => Tab::Settings,
+                                        _ => self.selected_tab,
+                                    };
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // Check table row clicks (Connections tab only)
+                    else if self.selected_tab == Tab::Connections && self.table_area.contains((mouse_col, mouse_row).into()) {
+                        // Table has header at row 0, data starts at row 1 within table_area
+                        let relative_y = mouse_row.saturating_sub(self.table_area.y);
+                        if relative_y >= 1 {
+                            let row_index = (relative_y - 1) as usize + self.scroll_offset;
+                            if row_index < self.connections.len() {
+                                self.selected_connection = row_index;
+                            }
                         }
                     }
                 }
-            }
             MouseEventKind::ScrollUp => {
                 if self.scroll_offset > 0 {
                     self.scroll_offset -= 3;
@@ -416,21 +423,34 @@ impl App {
         frame.render_widget(header, area);
     }
 
-    fn render_tabs(&self, frame: &mut Frame, area: Rect) {
-        let tab_labels: Vec<&str> = [Tab::Connections, Tab::Alerts, Tab::Statistics, Tab::Settings]
-            .iter()
-            .map(|t| t.label())
-            .collect();
+    fn render_tabs(&mut self, frame: &mut Frame, area: Rect) {
+            let tab_labels: Vec<&str> = [Tab::Connections, Tab::Alerts, Tab::Statistics, Tab::Settings]
+                .iter()
+                .map(|t| t.label())
+                .collect();
+
+            // Calculate tab regions for mouse hit testing
+            // Tabs widget renders with " | " divider between tabs
+            let divider = " | ";
+            let divider_width = divider.len() as u16;
+            let mut x = area.x + 1; // +1 for left border
         
-        let tabs = Tabs::new(tab_labels)
-            .select(self.selected_tab as usize)
-            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::White)))
-            .style(Style::default().fg(GRAY))
-            .highlight_style(Style::default().fg(Color::White).bg(Color::Black).add_modifier(Modifier::BOLD))
-            .divider(Span::raw(" | "));
-        
-        frame.render_widget(tabs, area);
-    }
+            for (i, label) in tab_labels.iter().enumerate() {
+                let label_width = label.len() as u16;
+                let region_width = label_width + if i < tab_labels.len() - 1 { divider_width } else { 0 };
+                self.tab_regions[i] = Some((x, x + region_width));
+                x += label_width + if i < tab_labels.len() - 1 { divider_width } else { 0 };
+            }
+
+            let tabs = Tabs::new(tab_labels)
+                .select(self.selected_tab as usize)
+                .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::White)))
+                .style(Style::default().fg(GRAY))
+                .highlight_style(Style::default().fg(Color::White).bg(Color::Black).add_modifier(Modifier::BOLD))
+                .divider(Span::raw(" | "));
+
+            frame.render_widget(tabs, area);
+        }
 
     fn render_content(&mut self, frame: &mut Frame, area: Rect) {
         match self.selected_tab {
@@ -722,10 +742,12 @@ pub async fn run_net_tui(_interface: Option<String>, interval: u64) -> Result<()
         let _ = m.stop().await;
     }
 
-    // Disable mouse mode properly via crossterm
+    // Disable mouse mode properly via crossterm - use the same stdout handle
     drop(terminal); // Release the backend
     disable_raw_mode()?;
-    execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+    let mut stdout_handle = std::io::stdout();
+    execute!(stdout_handle, LeaveAlternateScreen, DisableMouseCapture)?;
+    stdout_handle.flush()?;
 
     result
 }
