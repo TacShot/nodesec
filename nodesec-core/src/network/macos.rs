@@ -244,9 +244,13 @@ impl NetworkMonitor for MacOSNetworkMonitor {
         *self.running.lock().await = false;
         Ok(())
     }
-    
+
     async fn scan_once(&mut self) -> Result<()> {
         self.scan_connections().await
+    }
+
+    fn scan_once_blocking(&mut self) -> Result<()> {
+        self.scan_once_blocking_impl()
     }
 
     fn events(&self) -> Arc<Mutex<VecDeque<NetworkConnection>>> {
@@ -263,6 +267,158 @@ impl NetworkMonitor for MacOSNetworkMonitor {
 }
 
 impl MacOSNetworkMonitor {
+    /// Blocking scan for connections (for use in background threads)
+    pub fn scan_once_blocking_impl(&mut self) -> Result<()> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+
+        // Use netstat for TCP
+        let output = std::process::Command::new("netstat")
+            .args(["-an", "-p", "tcp"])
+            .output()
+            .context("Failed to run netstat")?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines().skip(2) {
+            if let Some(event) = self.parse_netstat_line_blocking(line, timestamp, NetworkProtocol::Tcp)? {
+                self.add_event_blocking(event)?;
+            }
+        }
+
+        // UDP
+        let output = std::process::Command::new("netstat")
+            .args(["-an", "-p", "udp"])
+            .output()
+            .context("Failed to run netstat for UDP")?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines().skip(2) {
+            if let Some(event) = self.parse_netstat_line_blocking(line, timestamp, NetworkProtocol::Udp)? {
+                self.add_event_blocking(event)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Blocking parse of netstat line
+    fn parse_netstat_line_blocking(&self, line: &str, timestamp: u64, protocol: NetworkProtocol) -> Result<Option<NetworkConnection>> {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 5 {
+            return Ok(None);
+        }
+
+        // netstat output format: Proto Recv-Q Send-Q Local Address Foreign Address (state)
+        let local_addr = parts[3];
+        let foreign_addr = parts[4];
+
+        // Skip listening sockets
+        if foreign_addr == "*.*" || foreign_addr == "[::]:*" {
+            return Ok(None);
+        }
+
+        let (src_ip, src_port) = self.parse_addr(local_addr)?;
+        let (dst_ip, dst_port) = self.parse_addr(foreign_addr)?;
+
+        // Skip if destination port is 0
+        if dst_port == 0 {
+            return Ok(None);
+        }
+
+        // Try to get PID using lsof (blocking)
+        let (pid, process_name, process_path, command_line, user) = self.get_process_info_blocking(&src_ip, src_port, &dst_ip, dst_port);
+
+        Ok(Some(NetworkConnection {
+            timestamp,
+            pid,
+            src_ip,
+            dst_ip,
+            src_port,
+            dst_port,
+            protocol,
+            process_name,
+            process_path,
+            command_line,
+            user,
+            threat_score: 0,
+            is_suspicious: false,
+        }))
+    }
+
+    /// Blocking add event
+    fn add_event_blocking(&self, event: NetworkConnection) -> Result<()> {
+        let mut events = self.events.blocking_lock();
+        events.push_back(event);
+        while events.len() > 10000 {
+            events.pop_front();
+        }
+        Ok(())
+    }
+
+    /// Blocking process info lookup
+    fn get_process_info_blocking(
+        &self,
+        src_ip: &IpAddr,
+        src_port: u16,
+        dst_ip: &IpAddr,
+        dst_port: u16,
+    ) -> (u32, String, Option<String>, Option<String>, Option<String>) {
+        // Use lsof to find the process owning this connection
+        let output = std::process::Command::new("lsof")
+            .args(["-i", &format!("{}@{}:{}", if matches!(src_ip, IpAddr::V4(_)) { "4" } else { "6" }, src_ip, src_port)])
+            .output();
+
+        let mut pid = 0;
+        let mut process_name = "unknown".to_string();
+        let mut process_path = None;
+        let mut command_line = None;
+        let mut user = None;
+
+        if let Ok(output) = output {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines().skip(1) {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    if let Ok(p) = parts[1].parse::<u32>() {
+                        pid = p;
+                        process_name = parts[0].to_string();
+                        user = Some(parts[2].to_string()); // user column
+                        break;
+                    }
+                }
+            }
+        }
+
+        if pid > 0 {
+            // Get more process details using ps
+            if let Ok(output) = std::process::Command::new("ps")
+                .args(["-p", &pid.to_string(), "-o", "comm="])
+                .output()
+            {
+                let comm = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !comm.is_empty() {
+                    process_name = comm;
+                }
+            }
+
+            // Get executable path
+            if let Ok(output) = std::process::Command::new("ps")
+                .args(["-p", &pid.to_string(), "-o", "args="])
+                .output()
+            {
+                let args_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !args_str.is_empty() {
+                    command_line = Some(args_str.clone());
+                    // First word is usually the executable
+                    if let Some(exe) = args_str.split_whitespace().next() {
+                        process_path = Some(exe.to_string());
+                    }
+                }
+            }
+        }
+
+        (pid, process_name, process_path, command_line, user)
+    }
+
     /// Scan connections once (called by ConnectionHandler)
     pub async fn scan_once(&self) -> Result<()> {
         self.scan_connections().await

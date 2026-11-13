@@ -32,10 +32,12 @@ pub trait NetworkMonitor: Send + Sync {
     async fn start(&mut self) -> Result<()>;
     async fn stop(&mut self) -> Result<()>;
     async fn scan_once(&mut self) -> Result<()>;
+    /// Blocking version of scan_once for use in background threads
+    fn scan_once_blocking(&mut self) -> Result<()>;
     fn events(&self) -> Arc<Mutex<VecDeque<NetworkConnection>>>;
     fn platform(&self) -> Platform;
     fn mode(&self) -> MonitorMode;
-    
+
     /// Drain all events from the internal queue
     async fn drain_events(&self) -> Vec<NetworkConnection> {
         let events_arc = self.events();

@@ -281,6 +281,12 @@ impl NetworkMonitor for LinuxNetworkMonitor {
         self.scan_connections().await
     }
 
+    fn scan_once_blocking(&mut self) -> Result<()> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let mut rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(self.scan_connections_blocking(timestamp))
+    }
+
     fn events(&self) -> Arc<Mutex<VecDeque<NetworkConnection>>> {
         self.events.clone()
     }
@@ -295,6 +301,22 @@ impl NetworkMonitor for LinuxNetworkMonitor {
 }
 
 impl LinuxNetworkMonitor {
+    /// Blocking scan for connections (for use in background threads)
+    pub fn scan_once_blocking(&mut self) -> Result<()> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let mut rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(self.scan_connections_blocking(timestamp))
+    }
+
+    /// Internal blocking scan implementation
+    async fn scan_connections_blocking(&self, timestamp: u64) -> Result<()> {
+        // Scan TCP connections
+        self.scan_tcp_connections(timestamp).await?;
+        // Scan UDP connections
+        self.scan_udp_connections(timestamp).await?;
+        Ok(())
+    }
+
     /// Scan connections once (called by ConnectionHandler)
     pub async fn scan_once(&self) -> Result<()> {
         self.scan_connections().await

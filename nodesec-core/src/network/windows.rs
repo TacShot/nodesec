@@ -405,6 +405,12 @@ impl NetworkMonitor for WindowsNetworkMonitor {
         self.scan_connections().await
     }
 
+    fn scan_once_blocking(&mut self) -> Result<()> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(self.scan_connections_blocking(timestamp))
+    }
+
     fn events(&self) -> Arc<Mutex<VecDeque<NetworkConnection>>> {
         self.events.clone()
     }
@@ -419,6 +425,29 @@ impl NetworkMonitor for WindowsNetworkMonitor {
 }
 
 impl WindowsNetworkMonitor {
+    /// Blocking scan for connections (for use in background threads)
+    pub fn scan_once_blocking(&mut self) -> Result<()> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let mut rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(self.scan_connections_blocking(timestamp))
+    }
+
+    /// Internal blocking scan implementation
+    async fn scan_connections_blocking(&self, timestamp: u64) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        {
+            self.scan_tcp_table(timestamp).await?;
+            self.scan_udp_table(timestamp).await?;
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Stub for non-Windows compilation
+        }
+
+        Ok(())
+    }
+
     /// Scan connections once (called by ConnectionHandler)
     pub async fn scan_once(&self) -> Result<()> {
         self.scan_connections().await

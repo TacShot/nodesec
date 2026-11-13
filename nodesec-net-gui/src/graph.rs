@@ -473,7 +473,15 @@ impl ConnectionGraph {
         let selected_id = self.selected_node.lock().unwrap().clone();
         let hovered_id = self.hovered_node.lock().unwrap().clone();
         
+        // Single interaction for both click and drag
         let response = ui.allocate_rect(rect, Sense::click_and_drag());
+        
+        // Handle click for node selection (left click without drag)
+        if response.clicked() {
+            if let Some(click_pos) = response.interact_pointer_pos() {
+                self.handle_click(ui, click_pos);
+            }
+        }
         
         // Handle pan - use secondary button or shift+drag to avoid conflicts with node selection
         if response.dragged_by(egui::PointerButton::Secondary) || 
@@ -499,14 +507,6 @@ impl ConnectionGraph {
             if pinch != 1.0 {
                 let mut z = self.zoom.lock().unwrap();
                 *z = (*z * pinch).clamp(0.15, 5.0);
-            }
-        }
-        
-        // Handle click for node selection - use a separate interaction
-        let click_response = ui.interact(rect, egui::Id::new("graph_click"), Sense::click());
-        if click_response.clicked() {
-            if let Some(click_pos) = click_response.interact_pointer_pos() {
-                self.handle_click(ui, click_pos);
             }
         }
         

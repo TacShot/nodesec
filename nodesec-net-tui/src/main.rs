@@ -255,19 +255,42 @@ impl App {
         
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // Handle left-click on tabs or table rows
-                // For now, just handle tab switching via click
-                if mouse.row == 0 {
-                    // Click on tab bar area
-                    let tab_width = 20; // Approximate tab width
-                    let tab_index = mouse.column / tab_width;
-                    self.selected_tab = match tab_index {
-                        0 => Tab::Connections,
-                        1 => Tab::Alerts,
-                        2 => Tab::Statistics,
-                        3 => Tab::Settings,
-                        _ => self.selected_tab,
-                    };
+                // Handle left-click based on selected tab
+                match self.selected_tab {
+                    Tab::Connections => {
+                        // Tab bar at row 1 (0-indexed after header)
+                        if mouse.row == 1 {
+                            let tab_width = 20;
+                            let tab_index = mouse.column / tab_width;
+                            self.selected_tab = match tab_index {
+                                0 => Tab::Connections,
+                                1 => Tab::Alerts,
+                                2 => Tab::Statistics,
+                                3 => Tab::Settings,
+                                _ => self.selected_tab,
+                            };
+                        } else if mouse.row >= 4 {
+                            // Table starts at row 4 (header at row 3, data at row 4+)
+                            let row_index = (mouse.row - 4) as usize + self.scroll_offset;
+                            if row_index < self.connections.len() {
+                                self.selected_connection = row_index;
+                            }
+                        }
+                    }
+                    Tab::Alerts | Tab::Statistics | Tab::Settings => {
+                        // Tab bar at row 1
+                        if mouse.row == 1 {
+                            let tab_width = 20;
+                            let tab_index = mouse.column / tab_width;
+                            self.selected_tab = match tab_index {
+                                0 => Tab::Connections,
+                                1 => Tab::Alerts,
+                                2 => Tab::Statistics,
+                                3 => Tab::Settings,
+                                _ => self.selected_tab,
+                            };
+                        }
+                    }
                 }
             }
             MouseEventKind::ScrollUp => {

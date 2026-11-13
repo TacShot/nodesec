@@ -91,6 +91,7 @@ pub fn render_connections_table(
             .min_col_width(80.0)
             .show(ui, |ui| {
                 // Header
+                ui.label(egui::RichText::new("Sel").color(ORANGE).strong());
                 ui.label(egui::RichText::new("Time").color(ORANGE).strong());
                 ui.label(egui::RichText::new("PID").color(ORANGE).strong());
                 ui.label(egui::RichText::new("Process").color(ORANGE).strong());
@@ -117,7 +118,7 @@ pub fn render_connections_table(
                         .unwrap_or_default();
                     
                     let is_selected = *selected_connection == Some(i);
-                    let response = ui.selectable_label(is_selected, "");
+                    let response = ui.selectable_label(is_selected, if is_selected { "✓" } else { "" });
                     
                     if response.clicked() {
                         *selected_connection = Some(i);
