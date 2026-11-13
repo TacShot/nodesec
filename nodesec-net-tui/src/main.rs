@@ -119,6 +119,10 @@ struct App {
     last_update: Instant,
     rx: mpsc::Receiver<NetworkConnection>,
     platform: Platform,
+    // Track rendered areas for mouse hit testing
+    tabs_area: Rect,
+    table_area: Rect,
+    header_area: Rect,
 }
 
 #[derive(Default, Clone)]
@@ -151,6 +155,9 @@ impl App {
             last_update: Instant::now(),
             rx,
             platform,
+            tabs_area: Rect::default(),
+            table_area: Rect::default(),
+            header_area: Rect::default(),
         }
     }
 
@@ -267,42 +274,32 @@ impl App {
     async fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) -> Result<()> {
         use crossterm::event::{MouseEventKind, MouseButton};
         
+        let mouse_col = mouse.column as u16;
+        let mouse_row = mouse.row as u16;
+        
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // Handle left-click based on selected tab
-                match self.selected_tab {
-                    Tab::Connections => {
-                        // Tab bar at row 1 (0-indexed after header)
-                        if mouse.row == 1 {
-                            let tab_width = 20;
-                            let tab_index = mouse.column / tab_width;
-                            self.selected_tab = match tab_index {
-                                0 => Tab::Connections,
-                                1 => Tab::Alerts,
-                                2 => Tab::Statistics,
-                                3 => Tab::Settings,
-                                _ => self.selected_tab,
-                            };
-                        } else if mouse.row >= 4 {
-                            // Table starts at row 4 (header at row 3, data at row 4+)
-                            let row_index = (mouse.row - 4) as usize + self.scroll_offset;
-                            if row_index < self.connections.len() {
-                                self.selected_connection = row_index;
-                            }
-                        }
-                    }
-                    Tab::Alerts | Tab::Statistics | Tab::Settings => {
-                        // Tab bar at row 1
-                        if mouse.row == 1 {
-                            let tab_width = 20;
-                            let tab_index = mouse.column / tab_width;
-                            self.selected_tab = match tab_index {
-                                0 => Tab::Connections,
-                                1 => Tab::Alerts,
-                                2 => Tab::Statistics,
-                                3 => Tab::Settings,
-                                _ => self.selected_tab,
-                            };
+                // Check tab bar clicks
+                if self.tabs_area.contains((mouse_col, mouse_row).into()) {
+                    let tab_width = (self.tabs_area.width / 4).max(1);
+                    let relative_x = mouse_col.saturating_sub(self.tabs_area.x);
+                    let tab_index = ((relative_x / tab_width) as usize).min(3);
+                    self.selected_tab = match tab_index {
+                        0 => Tab::Connections,
+                        1 => Tab::Alerts,
+                        2 => Tab::Statistics,
+                        3 => Tab::Settings,
+                        _ => self.selected_tab,
+                    };
+                }
+                // Check table row clicks (Connections tab only)
+                else if self.selected_tab == Tab::Connections && self.table_area.contains((mouse_col, mouse_row).into()) {
+                    // Table has header at row 0, data starts at row 1 within table_area
+                    let relative_y = mouse_row.saturating_sub(self.table_area.y);
+                    if relative_y >= 1 {
+                        let row_index = (relative_y - 1) as usize + self.scroll_offset;
+                        if row_index < self.connections.len() {
+                            self.selected_connection = row_index;
                         }
                     }
                 }
@@ -380,6 +377,10 @@ impl App {
                 Constraint::Length(3),
             ])
             .split(area);
+
+        self.header_area = chunks[0];
+        self.tabs_area = chunks[1];
+        self.table_area = chunks[2];
 
         self.render_header(frame, chunks[0]);
         self.render_tabs(frame, chunks[1]);
