@@ -5,18 +5,17 @@ use axum::{
         State,
     },
     response::Response,
-    routing::{get, post},
+    routing::get,
     Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use nodesec_core::{
     models::{NetworkConnection, NetworkProtocol, Platform, ThreatAlert},
-    network::{common::{WSMessage, AgentInfo, RuleSet}, handler::ConnectionHandler},
+    network::common::{WSMessage, AgentInfo, RuleSet},
 };
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
-    str::FromStr,
     sync::Arc,
     time::Duration,
 };
@@ -24,7 +23,7 @@ use tokio::{
     sync::{broadcast, mpsc, Mutex},
     time::interval,
 };
-use tracing::{info, warn, error};
+use tracing::{info, error};
 use uuid::Uuid;
 use rand::{thread_rng, Rng, SeedableRng, rngs::SmallRng};
 

@@ -1,10 +1,8 @@
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use nodesec_core::{
-    models::{NetworkConnection, Platform},
+    models::Platform,
     network::{linux::LinuxNetworkMonitor, macos::MacOSNetworkMonitor, windows::WindowsNetworkMonitor, common::NetworkMonitor},
 };
-use tokio::time::sleep;
 use tokio::task::spawn_blocking;
 
 pub fn start_monitoring(

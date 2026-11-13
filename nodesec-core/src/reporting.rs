@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::Path;
 use chrono::Utc;
-use crate::models::{AuditReport, AuditRule, CheckResult, Platform, InstalledApplication, ApplicationFinding, OsInfo, RunningProcess, ProcessFinding, AuditSummary};
+use crate::models::{AuditReport, AuditRule, CheckResult, Platform, AuditSummary};
 
 pub fn summarize_results(results: &[(AuditRule, CheckResult)]) -> AuditSummary {
     let mut passed = 0;

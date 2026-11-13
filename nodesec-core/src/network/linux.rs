@@ -2,7 +2,7 @@
 
 use crate::models::{MonitorMode, NetworkProtocol, Platform};
 use crate::network::common::{NetworkConnection, NetworkMonitor};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::VecDeque;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -24,6 +24,77 @@ impl LinuxNetworkMonitor {
             running: Arc::new(Mutex::new(false)),
             pid_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
+    }
+
+    /// Static helper for fuzzing /proc/net/tcp line parsing
+    pub fn parse_proc_net_line_static(line: &str, is_ipv6: bool) -> Result<Option<(IpAddr, u16, IpAddr, u16)>> {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 10 {
+            return Ok(None);
+        }
+
+        let local = parts[1];
+        let remote = parts[2];
+
+        let (src_ip, src_port) = Self::parse_addr_port_static(local, is_ipv6)?;
+        let (dst_ip, dst_port) = Self::parse_addr_port_static(remote, is_ipv6)?;
+
+        if dst_port == 0 {
+            return Ok(None);
+        }
+
+        Ok(Some((src_ip, src_port, dst_ip, dst_port)))
+    }
+
+    /// Static helper for fuzzing /proc/net/tcp content
+    pub fn parse_proc_net_tcp_static(content: &str) -> Result<Vec<(IpAddr, u16, IpAddr, u16)>> {
+        let mut results = Vec::new();
+        for line in content.lines().skip(1) {
+            if let Some((src_ip, src_port, dst_ip, dst_port)) = Self::parse_proc_net_line_static(line, false)? {
+                results.push((src_ip, src_port, dst_ip, dst_port));
+            }
+        }
+        Ok(results)
+    }
+
+    /// Static helper for fuzzing /proc/net/udp content
+    pub fn parse_proc_net_udp_static(content: &str) -> Result<Vec<(IpAddr, u16, IpAddr, u16)>> {
+        let mut results = Vec::new();
+        for line in content.lines().skip(1) {
+            if let Some((src_ip, src_port, dst_ip, dst_port)) = Self::parse_proc_net_line_static(line, false)? {
+                results.push((src_ip, src_port, dst_ip, dst_port));
+            }
+        }
+        Ok(results)
+    }
+
+    /// Static helper for fuzzing address:port parsing from /proc/net format
+    pub fn parse_addr_port_static(addr_port: &str, is_ipv6: bool) -> Result<(IpAddr, u16)> {
+        let parts: Vec<&str> = addr_port.split(':').collect();
+        if parts.len() != 2 {
+            return Err(anyhow::anyhow!("Invalid addr:port format"));
+        }
+
+        let ip_hex = parts[0];
+        let port_hex = parts[1];
+        let port = u16::from_str_radix(port_hex, 16)?;
+
+        let ip = if is_ipv6 {
+            let bytes: Vec<u8> = (0..ip_hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&ip_hex[i..i+2], 16).unwrap_or(0))
+                .collect();
+            if bytes.len() == 16 {
+                IpAddr::V6(Ipv6Addr::from(<[u8; 16]>::try_from(bytes).unwrap()))
+            } else {
+                return Err(anyhow::anyhow!("Invalid IPv6 address length"));
+            }
+        } else {
+            let ip_val = u32::from_str_radix(ip_hex, 16)?;
+            IpAddr::V4(Ipv4Addr::from(ip_val.to_le_bytes()))
+        };
+
+        Ok((ip, port))
     }
 
     async fn scan_connections(&self) -> Result<()> {
@@ -257,7 +328,7 @@ impl Default for LinuxNetworkMonitor {
 impl NetworkMonitor for LinuxNetworkMonitor {
     async fn start(&mut self) -> Result<()> {
         *self.running.lock().await = true;
-        let events = self.events.clone();
+        let _events = self.events.clone();
         let running = self.running.clone();
 
         tokio::spawn(async move {
@@ -283,7 +354,7 @@ impl NetworkMonitor for LinuxNetworkMonitor {
 
     fn scan_once_blocking(&mut self) -> Result<()> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let mut rt = tokio::runtime::Runtime::new()?;
+        let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(self.scan_connections_blocking(timestamp))
     }
 
@@ -304,7 +375,7 @@ impl LinuxNetworkMonitor {
     /// Blocking scan for connections (for use in background threads)
     pub fn scan_once_blocking(&mut self) -> Result<()> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let mut rt = tokio::runtime::Runtime::new()?;
+        let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(self.scan_connections_blocking(timestamp))
     }
 

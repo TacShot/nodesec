@@ -1,9 +1,8 @@
 //! Threat detection engine with rule-based and ML-based analysis
 
 use crate::models::{NetworkConnection, NetworkProtocol};
-use anyhow::Result;
 use std::collections::{HashMap, VecDeque};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::IpAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct ThreatDetector {
@@ -111,7 +110,7 @@ impl ThreatDetector {
         suspicious_ports.insert(4343, "Common malware".to_string());
 
         // Known malicious IPs (placeholder - would load from threat intel feeds)
-        let mut known_malicious_ips = HashMap::new();
+        let known_malicious_ips = HashMap::new();
         // These would be populated from threat intelligence feeds
 
         Self {
@@ -395,40 +394,47 @@ impl ThreatDetector {
     }
 
     fn ml_anomaly_detection(&mut self, conn: &NetworkConnection) -> f64 {
-        // Simplified isolation forest-like anomaly detection
-        // In production, use linfa or smartcore for actual ML
+            // Simplified isolation forest-like anomaly detection
+            // In production, use linfa or smartcore for actual ML
         
-        let features = self.extract_features(conn);
+            let features = self.extract_features(conn);
         
-        if self.connection_features.len() < 100 {
-            // Not enough training data yet
+            if self.connection_features.len() < 100 {
+                // Not enough training data yet
+                self.connection_features.push(features);
+                return 0.0;
+            }
+        
+            // Simple statistical anomaly detection
+            let mean = self.calculate_mean(&self.connection_features);
+            let std = self.calculate_std(&self.connection_features, &mean);
+        
+            let mut anomaly_score = 0.0;
+            for (i, &feat) in features.iter().enumerate() {
+                if i < mean.len() && std[i] > 0.0 {
+                    let z_score = ((feat - mean[i]) / std[i]).abs();
+                    anomaly_score += z_score;
+                }
+            }
+        
+            anomaly_score = anomaly_score / features.len() as f64;
+        
+            // Add to training set
             self.connection_features.push(features);
-            return 0.0;
-        }
-
-        // Simple statistical anomaly detection
-        let mean = self.calculate_mean(&self.connection_features);
-        let std = self.calculate_std(&self.connection_features, &mean);
+            if self.connection_features.len() > 10000 {
+                self.connection_features = self.connection_features.split_off(5000);
+            }
         
-        let mut anomaly_score = 0.0;
-        for (i, &feat) in features.iter().enumerate() {
-            if i < mean.len() && std[i] > 0.0 {
-                let z_score = ((feat - mean[i]) / std[i]).abs();
-                anomaly_score += z_score;
+            // Normalize to 0-1
+            let normalized = (anomaly_score / 5.0).min(1.0);
+        
+            // Apply threshold
+            if normalized > self.anomaly_threshold {
+                normalized
+            } else {
+                0.0
             }
         }
-        
-        anomaly_score = anomaly_score / features.len() as f64;
-        
-        // Add to training set
-        self.connection_features.push(features);
-        if self.connection_features.len() > 10000 {
-            self.connection_features = self.connection_features.split_off(5000);
-        }
-        
-        // Normalize to 0-1
-        (anomaly_score / 5.0).min(1.0)
-    }
 
     fn extract_features(&self, conn: &NetworkConnection) -> Vec<f64> {
             let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();

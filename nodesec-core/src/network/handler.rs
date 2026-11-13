@@ -39,7 +39,7 @@ impl ConnectionHandler {
 
         // Start periodic scanning
         let events = self.events.clone();
-        let threat_detector = self.threat_detector.clone();
+        let _threat_detector = self.threat_detector.clone();
         let retention_seconds = self.retention_seconds;
         let max_events = self.max_events;
         let monitor = self.monitor.clone();

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["nodesec-core", "nodesec-cli", "nodesec-tui", "nodesec-gui", "nodesec-net-tui", "nodesec-net-gui", "nodesec-net-server", "nodesec", "installer"]
-exclude = ["target"]
+exclude = ["target", "nodesec-core/fuzz"]
 
 [workspace.package]
 version = "0.1.0"

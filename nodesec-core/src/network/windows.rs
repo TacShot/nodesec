@@ -1,10 +1,9 @@
 //! Windows network monitoring using GetExtendedTcpTable and ETW
 
-use crate::models::{MonitorMode, NetworkProtocol, Platform};
+use crate::models::{MonitorMode, Platform};
 use crate::network::common::{NetworkConnection, NetworkMonitor};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::VecDeque;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
@@ -29,8 +28,117 @@ impl WindowsNetworkMonitor {
         }
     }
 
+    /// Static helper for fuzzing TCP row parsing (simplified for cross-platform fuzzing)
+    #[cfg(target_os = "windows")]
+    pub fn parse_tcp_row_static(row: &MIB_TCPROW_OWNER_PID, timestamp: u64) -> Result<NetworkConnection> {
+        let src_ip = IpAddr::V4(Ipv4Addr::from(row.dwLocalAddr.to_le_bytes()));
+        let dst_ip = IpAddr::V4(Ipv4Addr::from(row.dwRemoteAddr.to_le_bytes()));
+        let src_port = u16::from_be(row.dwLocalPort as u16);
+        let dst_port = u16::from_be(row.dwRemotePort as u16);
+        let pid = row.dwOwningPid;
+
+        if dst_port == 0 {
+            return Err(anyhow::anyhow!("Listening port"));
+        }
+
+        Ok(NetworkConnection {
+            timestamp,
+            pid,
+            src_ip,
+            dst_ip,
+            src_port,
+            dst_port,
+            protocol: NetworkProtocol::Tcp,
+            process_name: "unknown".to_string(),
+            process_path: None,
+            command_line: None,
+            user: None,
+            threat_score: 0,
+            is_suspicious: false,
+        })
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn parse_tcp_row_v6_static(row: &MIB_TCP6ROW_OWNER_PID, timestamp: u64) -> Result<NetworkConnection> {
+        let src_ip = IpAddr::V6(Ipv6Addr::from(row.ucLocalAddr.to_le_bytes()));
+        let dst_ip = IpAddr::V6(Ipv6Addr::from(row.ucRemoteAddr.to_le_bytes()));
+        let src_port = u16::from_be(row.dwLocalPort as u16);
+        let dst_port = u16::from_be(row.dwRemotePort as u16);
+        let pid = row.dwOwningPid;
+
+        if dst_port == 0 {
+            return Err(anyhow::anyhow!("Listening port"));
+        }
+
+        Ok(NetworkConnection {
+            timestamp,
+            pid,
+            src_ip,
+            dst_ip,
+            src_port,
+            dst_port,
+            protocol: NetworkProtocol::Tcp,
+            process_name: "unknown".to_string(),
+            process_path: None,
+            command_line: None,
+            user: None,
+            threat_score: 0,
+            is_suspicious: false,
+        })
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn parse_udp_row_static(row: &MIB_UDPROW_OWNER_PID, timestamp: u64, _is_v6: bool) -> Result<NetworkConnection> {
+        let src_ip = IpAddr::V4(Ipv4Addr::from(row.dwLocalAddr.to_le_bytes()));
+        let dst_ip = IpAddr::V4(Ipv4Addr::from(row.dwRemoteAddr.to_le_bytes()));
+        let src_port = u16::from_be(row.dwLocalPort as u16);
+        let dst_port = u16::from_be(row.dwRemotePort as u16);
+        let pid = row.dwOwningPid;
+
+        Ok(NetworkConnection {
+            timestamp,
+            pid,
+            src_ip,
+            dst_ip,
+            src_port,
+            dst_port,
+            protocol: NetworkProtocol::Udp,
+            process_name: "unknown".to_string(),
+            process_path: None,
+            command_line: None,
+            user: None,
+            threat_score: 0,
+            is_suspicious: false,
+        })
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn parse_udp_row_v6_static(row: &MIB_UDP6ROW_OWNER_PID, timestamp: u64) -> Result<NetworkConnection> {
+        let src_ip = IpAddr::V6(Ipv6Addr::from(row.ucLocalAddr.to_le_bytes()));
+        let dst_ip = IpAddr::V6(Ipv6Addr::from(row.ucRemoteAddr.to_le_bytes()));
+        let src_port = u16::from_be(row.dwLocalPort as u16);
+        let dst_port = u16::from_be(row.dwRemotePort as u16);
+        let pid = row.dwOwningPid;
+
+        Ok(NetworkConnection {
+            timestamp,
+            pid,
+            src_ip,
+            dst_ip,
+            src_port,
+            dst_port,
+            protocol: NetworkProtocol::Udp,
+            process_name: "unknown".to_string(),
+            process_path: None,
+            command_line: None,
+            user: None,
+            threat_score: 0,
+            is_suspicious: false,
+        })
+    }
+
     async fn scan_connections(&self) -> Result<()> {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let _timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
         #[cfg(target_os = "windows")]
         {
@@ -428,12 +536,12 @@ impl WindowsNetworkMonitor {
     /// Blocking scan for connections (for use in background threads)
     pub fn scan_once_blocking(&mut self) -> Result<()> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let mut rt = tokio::runtime::Runtime::new()?;
+        let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(self.scan_connections_blocking(timestamp))
     }
 
     /// Internal blocking scan implementation
-    async fn scan_connections_blocking(&self, timestamp: u64) -> Result<()> {
+    async fn scan_connections_blocking(&self, _timestamp: u64) -> Result<()> {
         #[cfg(target_os = "windows")]
         {
             self.scan_tcp_table(timestamp).await?;

@@ -1,10 +1,10 @@
 //! Connection graph visualization for network monitoring
 
-use egui::{Color32, Pos2, Response, Shape, Sense, Stroke, Vec2, Widget, Align2, FontId};
+use egui::{Color32, Pos2, Response, Shape, Sense, Stroke, Vec2, Align2, FontId};
 use nodesec_core::models::NetworkConnection;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub struct GraphNode {
@@ -315,7 +315,7 @@ impl ConnectionGraph {
         }
         
         let interface_count = interface_positions.len() as f32;
-        for (idx, (interface, node_ids)) in interface_positions.iter().enumerate() {
+        for (idx, (_interface, node_ids)) in interface_positions.iter().enumerate() {
             let angle = (idx as f32 / interface_count) * 2.0 * std::f32::consts::PI;
             let cluster_center = Pos2::new(
                 center.x + angle.cos() * 250.0,
@@ -430,7 +430,7 @@ impl ConnectionGraph {
         nodes.get(&hovered_id).cloned()
     }
     
-    pub fn handle_click(&self, ui: &egui::Ui, pos: Pos2) -> bool {
+    pub fn handle_click(&self, _ui: &egui::Ui, pos: Pos2) -> bool {
         let nodes = self.nodes.lock().unwrap();
         let zoom = *self.zoom.lock().unwrap();
         let pan = *self.pan_offset.lock().unwrap();
@@ -447,7 +447,7 @@ impl ConnectionGraph {
         false
     }
     
-    pub fn handle_hover(&self, ui: &egui::Ui, pos: Pos2) -> bool {
+    pub fn handle_hover(&self, _ui: &egui::Ui, pos: Pos2) -> bool {
         let nodes = self.nodes.lock().unwrap();
         let zoom = *self.zoom.lock().unwrap();
         let pan = *self.pan_offset.lock().unwrap();

@@ -1,8 +1,6 @@
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints};
-use crate::state::{ConnectionItem, ThreatLevel, ConnectionStats, ProcessTreeItem, FilterSettings, ActionLogEntry, IgnoreRule, ScanSettings, ThreatLevel::*};
-use crate::graph::ConnectionType;
-use nodesec_core::models::NetworkConnection;
+use crate::state::{ConnectionItem, ThreatLevel, ConnectionStats, ProcessTreeItem, FilterSettings};
 use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
 
@@ -229,7 +227,7 @@ pub fn terminate_process(pid: u32, process_name: &str, monitor_state: &crate::st
 pub fn block_port(port: u16, pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
     #[cfg(target_os = "macos")]
     {
-        let rule = format!("block out proto tcp from any to any port {}", port);
+        let _rule = format!("block out proto tcp from any to any port {}", port);
         let _ = std::process::Command::new("pfctl")
             .args(["-a", "nodesec", "-f", "-"])
             .stdin(std::process::Stdio::piped())
@@ -607,7 +605,7 @@ pub fn render_dashboard(
     connection_history: &Arc<Mutex<VecDeque<(f64, usize)>>>,
     threat_history: &Arc<Mutex<VecDeque<(f64, u8)>>>,
     monitor_state: &crate::state::MonitorState,
-    monitoring: bool,
+    _monitoring: bool,
 ) {
     // Real-time charts
     let conn_history = connection_history.lock().unwrap();
@@ -625,8 +623,8 @@ pub fn render_dashboard(
             
             let line = Line::new(points)
                 .color(egui::Color32::from_rgb(0, 200, 255))
-                .width(2.0)
-                .fill(0.0);
+                .width(2.0_f32)
+                .fill(0.0_f32);
             
             Plot::new("conn_plot")
                 .view_aspect(3.0)
@@ -655,8 +653,8 @@ pub fn render_dashboard(
             
             let line = Line::new(points)
                 .color(egui::Color32::from_rgb(255, 100, 100))
-                .width(2.0)
-                .fill(0.0);
+                .width(2.0_f32)
+                .fill(0.0_f32);
             
             Plot::new("threat_plot")
                 .view_aspect(3.0)
@@ -691,7 +689,7 @@ pub fn render_dashboard(
         ui.heading(egui::RichText::new("Top Suspicious Processes").color(ORANGE));
         
         let connections = monitor_state.connections.lock().unwrap();
-        let mut suspicious: Vec<_> = connections.iter()
+        let suspicious: Vec<_> = connections.iter()
             .filter(|c| c.connection.is_suspicious)
             .take(10)
             .collect();

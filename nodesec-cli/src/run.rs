@@ -1,4 +1,4 @@
-use crate::args::{Args, TargetOs, OutputFormat, ComplianceStandard};
+use crate::args::{Args, TargetOs, OutputFormat};
 use nodesec_core::{AuditEngine, Platform};
 use std::io::{self, Write};
 use std::path::PathBuf;

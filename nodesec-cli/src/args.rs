@@ -1,5 +1,4 @@
 use clap::Parser;
-use colored::*;
 use nodesec_core::Platform;
 use std::path::PathBuf;
 

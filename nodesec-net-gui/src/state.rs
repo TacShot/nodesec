@@ -1,9 +1,6 @@
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as TokioMutex;
-use nodesec_core::{
-    models::{NetworkConnection, Platform},
-    network::{common::NetworkMonitor},
-};
+use nodesec_core::models::{NetworkConnection, Platform};
 use std::collections::VecDeque;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -263,7 +260,7 @@ pub struct MonitorState {
 }
 
 impl MonitorState {
-    pub fn new(platform: Platform) -> Self {
+    pub fn new(_platform: Platform) -> Self {
         Self {
             connections: Arc::new(Mutex::new(Vec::new())),
             alerts: Arc::new(Mutex::new(Vec::new())),

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crate::models::{AuditReport, CheckResult, CheckStatus, Platform, ApplicationFinding, InstalledApplication, LogEntry, AdFinding, NetworkConnection};
+use crate::models::{AuditReport, CheckResult, CheckStatus, Platform, ApplicationFinding, InstalledApplication};
 use crate::checks::get_rules;
 use crate::command_runner::CommandRunner;
 use crate::inventory::{inventory_applications, inventory_running_processes, assess_processes};

@@ -1,7 +1,7 @@
 use clap::{Parser, Args, Subcommand};
 use anyhow::Result;
 use std::process::Command;
-use nodesec_cli::{Args as CliArgs, TargetOs, OutputFormat, ComplianceStandard};
+use nodesec_cli::{TargetOs, OutputFormat, ComplianceStandard};
 
 #[derive(Parser, Debug)]
 #[command(name = "nodesec", version, about = "Cross-platform System & Network Security Platform")]
@@ -311,7 +311,7 @@ fn handle_rule_command(cmd: RuleCommands) -> Result<()> {
 }
 
 // Network mode implementations
-fn run_net_tui(interface: Option<String>, interval: u64) -> Result<()> {
+fn run_net_tui(_interface: Option<String>, _interval: u64) -> Result<()> {
     let status = Command::new("cargo")
         .args(["run", "--bin", "nodesec-net-tui"])
         .current_dir("/Users/tac/nodesec")
@@ -320,7 +320,7 @@ fn run_net_tui(interface: Option<String>, interval: u64) -> Result<()> {
     Ok(())
 }
 
-fn run_net_gui(interface: Option<String>, interval: u64) -> Result<()> {
+fn run_net_gui(_interface: Option<String>, _interval: u64) -> Result<()> {
     let status = Command::new("cargo")
         .args(["run", "--bin", "nodesec-net-gui"])
         .current_dir("/Users/tac/nodesec")
@@ -335,7 +335,7 @@ fn run_net_cli(interface: Option<String>, interval: u64) -> Result<()> {
     Ok(())
 }
 
-fn run_net_server(bind: String, tls: bool, cert: Option<String>, key: Option<String>) -> Result<()> {
+fn run_net_server(bind: String, _tls: bool, _cert: Option<String>, _key: Option<String>) -> Result<()> {
     println!("Starting network server on {}", bind);
     let status = Command::new("cargo")
         .args(["run", "--bin", "nodesec-net-server"])
@@ -383,7 +383,7 @@ fn list_rules() -> Result<()> {
     Ok(())
 }
 
-fn add_rule(name: String, description: String, severity: String) -> Result<()> {
+fn add_rule(name: String, _description: String, severity: String) -> Result<()> {
     println!("Added rule: {} ({})", name, severity);
     Ok(())
 }

@@ -10,19 +10,14 @@
 
 use std::env;
 use std::fs;
-use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::thread;
-use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use dirs;
 use reqwest::blocking::Client;
-use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 const GITHUB_REPO: &str = "TacShot/nodesec";
 const BINARY_NAME: &str = "nodesec";

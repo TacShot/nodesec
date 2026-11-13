@@ -14,3 +14,8 @@ nodesec-gui = { path = "../nodesec-gui" }
 clap = { workspace = true, features = ["derive"] }
 anyhow = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+predicates = { workspace = true }
+assert_cmd = { workspace = true }

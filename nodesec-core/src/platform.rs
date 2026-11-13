@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use sysinfo::System;
 use crate::models::{OsInfo, Platform};
 use crate::command_runner::CommandRunner;

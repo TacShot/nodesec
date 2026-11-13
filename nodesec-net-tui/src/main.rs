@@ -1,15 +1,14 @@
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, MouseEventKind, MouseButton},
+    event::{self, Event, KeyCode, KeyEventKind},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand,
     execute,
 };
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
+    text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Table, Row, Cell, Tabs},
     Frame, Terminal,
 };
@@ -18,7 +17,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Mutex};
 use nodesec_core::{
-    models::{NetworkConnection, NetworkProtocol, Platform},
+    models::{NetworkConnection, Platform},
     network::{linux::LinuxNetworkMonitor, macos::MacOSNetworkMonitor, windows::WindowsNetworkMonitor, common::NetworkMonitor},
 };
 
@@ -621,7 +620,7 @@ impl App {
     }
 }
 
-pub async fn run_net_tui(interface: Option<String>, interval: u64) -> Result<()> {
+pub async fn run_net_tui(_interface: Option<String>, interval: u64) -> Result<()> {
     enable_raw_mode()?;
     execute!(stdout(), EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
 

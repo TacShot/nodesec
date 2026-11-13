@@ -958,7 +958,7 @@ impl App {
         ];
 
         let items: Vec<ListItem> = options.iter().enumerate().map(|(i, (label, desc))| {
-            let (fg, bg, border_color) = if i == self.selected_report {
+            let (fg, bg, _border_color) = if i == self.selected_report {
                 (Color::White, Color::Black, Color::White)
             } else {
                 (Color::DarkGray, Color::Black, Color::White)
@@ -1007,7 +1007,7 @@ impl App {
             ];
 
             let items: Vec<ListItem> = options.iter().enumerate().map(|(i, (label, desc))| {
-                let (fg, bg, border_color) = if i == self.selected_output {
+                let (fg, bg, _border_color) = if i == self.selected_output {
                     (Color::White, Color::Black, Color::White)
                 } else {
                     (Color::DarkGray, Color::Black, Color::White)

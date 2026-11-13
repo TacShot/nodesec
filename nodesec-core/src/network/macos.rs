@@ -4,7 +4,7 @@ use crate::models::{MonitorMode, NetworkProtocol, Platform};
 use crate::network::common::{NetworkConnection, NetworkMonitor};
 use anyhow::{Context, Result};
 use std::collections::VecDeque;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
@@ -19,6 +19,80 @@ impl MacOSNetworkMonitor {
         Self {
             events: Arc::new(Mutex::new(VecDeque::with_capacity(10000))),
             running: Arc::new(Mutex::new(false)),
+        }
+    }
+
+    /// Static helper for fuzzing netstat line parsing
+    pub fn parse_netstat_line_static(line: &str, timestamp: u64, protocol: NetworkProtocol) -> Result<Option<NetworkConnection>> {
+        // Skip listening sockets
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 5 {
+            return Ok(None);
+        }
+
+        let local_addr = parts[3];
+        let foreign_addr = parts[4];
+
+        if foreign_addr == "*.*" || foreign_addr == "[::]:*" {
+            return Ok(None);
+        }
+
+        let (src_ip, src_port) = Self::parse_addr_static(local_addr)?;
+        let (dst_ip, dst_port) = Self::parse_addr_static(foreign_addr)?;
+
+        if dst_port == 0 {
+            return Ok(None);
+        }
+
+        Ok(Some(NetworkConnection {
+            timestamp,
+            pid: 0,
+            src_ip,
+            dst_ip,
+            src_port,
+            dst_port,
+            protocol,
+            process_name: "unknown".to_string(),
+            process_path: None,
+            command_line: None,
+            user: None,
+            threat_score: 0,
+            is_suspicious: false,
+        }))
+    }
+
+    /// Static helper for fuzzing address parsing
+    pub fn parse_addr_static(addr: &str) -> Result<(IpAddr, u16)> {
+        if addr.contains("*") {
+            return Err(anyhow::anyhow!("Wildcard address"));
+        }
+
+        if addr.starts_with('[') {
+            let end_bracket = addr.find(']').ok_or_else(|| anyhow::anyhow!("Invalid IPv6 address"))?;
+            let ip_str = &addr[1..end_bracket];
+            let port_str = &addr[end_bracket+2..];
+            let ip = ip_str.parse::<IpAddr>()?;
+            let port = port_str.parse::<u16>()?;
+            Ok((ip, port))
+        } else if addr.starts_with("::") || addr.contains("::") {
+            if let Some(last_dot) = addr.rfind('.') {
+                let ip_str = &addr[..last_dot];
+                let port_str = &addr[last_dot+1..];
+                let ip = ip_str.parse::<IpAddr>()?;
+                let port = port_str.parse::<u16>()?;
+                Ok((ip, port))
+            } else {
+                Err(anyhow::anyhow!("Invalid IPv6 address format"))
+            }
+        } else {
+            let parts: Vec<&str> = addr.rsplitn(2, '.').collect();
+            if parts.len() != 2 {
+                return Err(anyhow::anyhow!("Invalid address format"));
+            }
+            let port = parts[0].parse::<u16>()?;
+            let ip_str = parts[1];
+            let ip = ip_str.parse::<IpAddr>()?;
+            Ok((ip, port))
         }
     }
 
@@ -155,8 +229,8 @@ impl MacOSNetworkMonitor {
         &self,
         src_ip: &IpAddr,
         src_port: u16,
-        dst_ip: &IpAddr,
-        dst_port: u16,
+        _dst_ip: &IpAddr,
+        _dst_port: u16,
     ) -> (u32, String, Option<String>, Option<String>, Option<String>) {
         // Use lsof to find the process owning this connection
         let output = tokio::process::Command::new("lsof")
@@ -359,8 +433,8 @@ impl MacOSNetworkMonitor {
         &self,
         src_ip: &IpAddr,
         src_port: u16,
-        dst_ip: &IpAddr,
-        dst_port: u16,
+        _dst_ip: &IpAddr,
+        _dst_port: u16,
     ) -> (u32, String, Option<String>, Option<String>, Option<String>) {
         // Use lsof to find the process owning this connection
         let output = std::process::Command::new("lsof")

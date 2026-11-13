@@ -1,0 +1,44 @@
+[package]
+name = "nodesec-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.nodesec-core]
+path = ".."
+
+[[bin]]
+name = "fuzz_target_1"
+path = "fuzz_targets/fuzz_target_1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "macos_parser"
+path = "fuzz_targets/macos_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "linux_parser"
+path = "fuzz_targets/linux_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "threat_engine"
+path = "fuzz_targets/threat_engine.rs"
+test = false
+doc = false
+bench = false

@@ -1,11 +1,10 @@
 use eframe::egui;
-use egui_plot::{Line, Plot, PlotPoints};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::collections::VecDeque;
 use tokio::runtime;
 use nodesec_core::{
-    models::{NetworkConnection, Platform},
+    models::Platform,
     network::{common::NetworkMonitor},
 };
 
@@ -14,9 +13,7 @@ mod monitor;
 mod ui;
 mod graph;
 
-use crate::state::{MonitorState, ThreatLevel, ConnectionItem, ProcessTreeItem, FilterSettings};
-use crate::monitor::{start_monitoring, stop_monitoring};
-use crate::ui::{render_connections_table, render_alerts, render_statistics, render_settings, render_dashboard, render_process_tree, render_connection_graph, render_connection_detail, stat_card};
+use crate::state::FilterSettings;
 use crate::graph::ConnectionGraph;
 
 // Colors matching 7-color palette
@@ -440,7 +437,7 @@ impl eframe::App for App {
             override_text_color: Some(WHITE),
             window_fill: DARK_BG,
             panel_fill: PANEL_BG,
-            window_stroke: egui::Stroke::new(1.0, BORDER),
+            window_stroke: egui::Stroke::new(1.0_f32, BORDER),
             ..Default::default()
         });
         

@@ -1,8 +1,6 @@
 use anyhow::Result;
-use crate::models::{AuditRule, CheckResult, CheckStatus, CveQuery, Platform, Severity, CommandResult};
+use crate::models::{AuditRule, CheckResult, CheckStatus, CveQuery, Platform, Severity};
 use crate::command_runner::CommandRunner;
-
-type CheckFn = fn(&CommandRunner) -> Result<CheckResult>;
 
 pub fn get_rules(platform: Platform) -> Vec<AuditRule> {
     match platform {
