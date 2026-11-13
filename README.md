@@ -121,6 +121,12 @@ nodesec/
 - **Memory Safety**: Zero `unsafe` in core; only FFI in platform-specific modules
 - **Async-Free Core**: Synchronous core for simplicity; async only in network monitor, WebSocket server, installer HTTP downloads
 
+### Architecture Diagram
+![Architecture](docs/architecture.svg)
+
+### User Interaction Flow
+![Interaction Flow](docs/interaction-flow.svg)
+
 ## Resource Usage
 
 | Component | Binary Size (Release) | Typical RAM | CPU (Idle) | CPU (Scanning) |
