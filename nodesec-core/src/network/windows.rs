@@ -8,7 +8,6 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
-use tokio::time::{interval, Duration};
 
 #[cfg(target_os = "windows")]
 use windows::Win32::NetworkManagement::IpHelper::*;
@@ -31,7 +30,7 @@ impl WindowsNetworkMonitor {
     }
 
     async fn scan_connections(&self) -> Result<()> {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64;
+        let _timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64;
 
         #[cfg(target_os = "windows")]
         {

@@ -3,22 +3,14 @@ name = "nodesec-gui"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
-description = "GUI for nodesec (Tauri + React/D3.js)"
+description = "GUI for nodesec (egui/eframe)"
 repository = { workspace = true }
 
 [dependencies]
 nodesec-core = { path = "../nodesec-core" }
-tauri = { workspace = true }
-tauri-plugin-websocket = { version = "2.0", features = ["default"] }
-serde = { workspace = true }
-serde_json = { workspace = true }
+egui = { workspace = true }
+eframe = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 chrono = { workspace = true }
-uuid = { workspace = true }
 dirs = { workspace = true }
-tokio-tungstenite = { workspace = true }
-futures-util = { workspace = true }
-
-[build-dependencies]
-tauri-build = { version = "2.0", features = [] }

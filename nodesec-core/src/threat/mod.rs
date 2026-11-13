@@ -3,7 +3,7 @@
 use crate::models::{NetworkConnection, NetworkProtocol};
 use anyhow::Result;
 use std::collections::{HashMap, VecDeque};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct ThreatDetector {
@@ -35,6 +35,49 @@ struct ProcessConnection {
 }
 
 impl ThreatDetector {
+    fn is_private_ip(ip: &IpAddr) -> bool {
+        match ip {
+            IpAddr::V4(ipv4) => {
+                let octets = ipv4.octets();
+                // 10.0.0.0/8
+                (octets[0] == 10) ||
+                // 172.16.0.0/12
+                (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31) ||
+                // 192.168.0.0/16
+                (octets[0] == 192 && octets[1] == 168) ||
+                // 127.0.0.0/8 (loopback)
+                (octets[0] == 127)
+            }
+            IpAddr::V6(ipv6) => {
+                let segments = ipv6.segments();
+                // ::1/128 (loopback)
+                (segments == [0, 0, 0, 0, 0, 0, 0, 1]) ||
+                // fe80::/10 (link-local)
+                (segments[0] & 0xffc0 == 0xfe80) ||
+                // fc00::/7 (unique local)
+                (segments[0] & 0xfe00 == 0xfc00)
+            }
+        }
+    }
+
+    fn is_link_local_ip(ip: &IpAddr) -> bool {
+        match ip {
+            IpAddr::V6(ipv6) => {
+                let segments = ipv6.segments();
+                // fe80::/10 (link-local)
+                segments[0] & 0xffc0 == 0xfe80
+            }
+            _ => false,
+        }
+    }
+
+    fn is_loopback_ip(ip: &IpAddr) -> bool {
+        match ip {
+            IpAddr::V4(ipv4) => ipv4.octets()[0] == 127,
+            IpAddr::V6(ipv6) => ipv6.segments() == [0, 0, 0, 0, 0, 0, 0, 1],
+        }
+    }
+
     pub fn new() -> Self {
         let mut safe_ports = HashMap::new();
         safe_ports.insert(80, "HTTP".to_string());
@@ -217,27 +260,29 @@ impl ThreatDetector {
     }
 
     fn check_unusual_timing(&self, conn: &NetworkConnection) -> u16 {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(now as i64, 0).unwrap();
-        let hour = dt.hour();
-        let weekday = dt.weekday();
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            // Calculate hour (0-23) from seconds since epoch
+            let hour = ((now % 86400) / 3600) as u32;
+            // Calculate weekday (0=Sunday, 6=Saturday) - 1970-01-01 was Thursday (4)
+            let days_since_epoch = now / 86400;
+            let weekday = (4 + days_since_epoch) % 7; // 0=Sunday
+        
+            let mut score = 0;
 
-        let mut score = 0;
-
-        // Late night connections (2 AM - 6 AM)
-        if (2..=6).contains(&hour) {
-            score += 10;
-        }
-
-        // Weekend connections to unusual ports
-        if weekday == chrono::Weekday::Sat || weekday == chrono::Weekday::Sun {
-            if !self.safe_ports.contains_key(&conn.dst_port) {
-                score += 5;
+            // Late night connections (2 AM - 6 AM)
+            if (2..=6).contains(&hour) {
+                score += 10;
             }
-        }
 
-        score
-    }
+            // Weekend connections to unusual ports (weekday 0=Sun, 6=Sat)
+            if weekday == 0 || weekday == 6 {
+                if !self.safe_ports.contains_key(&conn.dst_port) {
+                    score += 5;
+                }
+            }
+
+            score
+        }
 
     fn check_first_time_process(&self, conn: &NetworkConnection) -> u16 {
         if self.process_first_seen.contains_key(&conn.pid) {
@@ -333,7 +378,7 @@ impl ThreatDetector {
     }
 
     fn check_known_malicious_indicators(&self, conn: &NetworkConnection) -> u16 {
-        let mut score = 0;
+        let mut score: u16 = 0;
         let dst_ip_str = conn.dst_ip.to_string();
 
         // Check against known malicious IPs
@@ -342,7 +387,7 @@ impl ThreatDetector {
         }
 
         // Check for private IPs (less suspicious for internal connections)
-        if conn.dst_ip.is_loopback() || conn.dst_ip.is_private() || conn.dst_ip.is_link_local() {
+        if Self::is_loopback_ip(&conn.dst_ip) || Self::is_private_ip(&conn.dst_ip) || Self::is_link_local_ip(&conn.dst_ip) {
             score = score.saturating_sub(10); // Reduce score for internal
         }
 
@@ -386,20 +431,22 @@ impl ThreatDetector {
     }
 
     fn extract_features(&self, conn: &NetworkConnection) -> Vec<f64> {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(now as i64, 0).unwrap();
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            let hour = ((now % 86400) / 3600) as f64;
+            let days_since_epoch = now / 86400;
+            let weekday = ((4 + days_since_epoch) % 7) as f64;
 
-        vec![
-            conn.dst_port as f64 / 65535.0,
-            conn.src_port as f64 / 65535.0,
-            if conn.dst_ip.is_private() { 1.0 } else { 0.0 },
-            if self.safe_ports.contains_key(&conn.dst_port) { 1.0 } else { 0.0 },
-            conn.process_name.len() as f64 / 50.0,
-            conn.command_line.as_deref().unwrap_or("").len() as f64 / 200.0,
-            dt.hour() as f64 / 24.0,
-            dt.weekday() as u8 as f64 / 7.0,
-        ]
-    }
+            vec![
+                conn.dst_port as f64 / 65535.0,
+                conn.src_port as f64 / 65535.0,
+                if Self::is_private_ip(&conn.dst_ip) { 1.0 } else { 0.0 },
+                if self.safe_ports.contains_key(&conn.dst_port) { 1.0 } else { 0.0 },
+                conn.process_name.len() as f64 / 50.0,
+                conn.command_line.as_deref().unwrap_or("").len() as f64 / 200.0,
+                hour / 24.0,
+                weekday / 7.0,
+            ]
+        }
 
     fn calculate_mean(&self, data: &[Vec<f64>]) -> Vec<f64> {
         if data.is_empty() {

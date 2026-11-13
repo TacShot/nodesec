@@ -65,13 +65,13 @@ impl ConnectionHandler {
 
     pub async fn get_recent_connections(&self, limit: usize) -> Vec<NetworkConnection> {
         let events = self.events.lock().await;
-        let threat_detector = self.threat_detector.lock().await;
+        let mut threat_detector = self.threat_detector.lock().await;
 
         events
             .iter()
             .rev()
             .take(limit)
-            .map(|e| self.event_to_network_connection(e, &threat_detector))
+            .map(|e| self.event_to_network_connection(e, &mut threat_detector))
             .collect()
     }
 
@@ -80,8 +80,12 @@ impl ConnectionHandler {
         let threat_detector = self.threat_detector.lock().await;
 
         let total = events.len();
-        let suspicious = events.iter()
-            .map(|e| threat_detector.analyze(&self.event_to_network_connection(e, &threat_detector)))
+        let connections: Vec<_> = events.iter()
+            .map(|e| self.event_to_network_connection(e, &mut ThreatDetector::new()))
+            .collect();
+        let mut threat_detector_clone = ThreatDetector::new();
+        let suspicious = connections.iter()
+            .map(|c| threat_detector_clone.analyze(c))
             .filter(|s| *s >= 50)
             .count();
 
@@ -106,7 +110,7 @@ impl ConnectionHandler {
         }
     }
 
-    fn event_to_network_connection(&self, event: &ConnectionEvent, detector: &ThreatDetector) -> NetworkConnection {
+    fn event_to_network_connection(&self, event: &ConnectionEvent, detector: &mut ThreatDetector) -> NetworkConnection {
         let threat_score = detector.analyze(&NetworkConnection {
             pid: event.pid,
             src_ip: event.src_ip,
@@ -166,7 +170,7 @@ impl ConnectionHandler {
         // Implementation would go here
     }
 
-    fn top_n<T: Clone + Ord, C: std::hash::Hash + Eq>(map: std::collections::HashMap<T, C>, n: usize) -> Vec<(T, C)> {
+    fn top_n<T: Clone + Ord, C: Ord + Clone>(map: std::collections::HashMap<T, C>, n: usize) -> Vec<(T, C)> {
         let mut vec: Vec<_> = map.into_iter().collect();
         vec.sort_by(|a, b| b.1.cmp(&a.1));
         vec.into_iter().take(n).collect()

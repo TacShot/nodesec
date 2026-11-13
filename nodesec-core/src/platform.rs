@@ -46,7 +46,7 @@ fn detect_linux_os_info(_sys: &System) -> Result<OsInfo> {
     Ok(OsInfo {
         name,
         version,
-        architecture: System::cpu_arch(),
+        architecture: Some(System::cpu_arch()),
         build: None,
         kernel: Some(System::kernel_version().unwrap_or_default()),
         security_patches: vec![],
@@ -73,7 +73,7 @@ fn detect_macos_os_info(_sys: &System) -> Result<OsInfo> {
     Ok(OsInfo {
         name: product_name,
         version,
-        architecture: System::cpu_arch(),
+        architecture: Some(System::cpu_arch()),
         build,
         kernel: Some(System::kernel_version().unwrap_or_default()),
         security_patches: vec![],
@@ -87,7 +87,7 @@ fn detect_windows_os_info(runner: Option<&CommandRunner>, _sys: &System) -> Resu
     });
     let mut name = "Windows".to_string();
     let version = System::os_version().unwrap_or_else(|| std::env::consts::OS.to_string());
-    let architecture = System::cpu_arch();
+    let architecture = Some(System::cpu_arch());
     let mut build = None;
     let mut patches = vec![];
 

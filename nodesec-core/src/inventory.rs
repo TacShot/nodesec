@@ -184,9 +184,9 @@ pub fn inventory_running_processes(_platform: Platform, _runner: &CommandRunner,
         }
         processes.push(RunningProcess {
             pid: pid.as_u32(),
-            name: process.name().to_string(),
+            name: process.name().to_string_lossy().to_string(),
             executable: process.exe().map(|p| p.to_string_lossy().to_string()),
-            command_line: Some(process.cmd().join(" ")),
+            command_line: Some(process.cmd().iter().map(|s| s.to_string_lossy()).collect::<Vec<_>>().join(" ")),
             source: "sysinfo".to_string(),
         });
     }

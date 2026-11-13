@@ -8,7 +8,6 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
-use tokio::time::{interval, Duration};
 
 pub struct MacOSNetworkMonitor {
     events: Arc<Mutex<VecDeque<ConnectionEvent>>>,
@@ -42,7 +41,7 @@ impl MacOSNetworkMonitor {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines().skip(2) { // Skip headers
-            if let Some(event) = self.parse_netstat_line(line, timestamp, NetworkProtocol::Tcp)? {
+            if let Some(event) = self.parse_netstat_line(line, timestamp, NetworkProtocol::Tcp).await? {
                 self.add_event(event).await;
             }
         }
@@ -56,7 +55,7 @@ impl MacOSNetworkMonitor {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines().skip(2) {
-            if let Some(event) = self.parse_netstat_line(line, timestamp, NetworkProtocol::Udp)? {
+            if let Some(event) = self.parse_netstat_line(line, timestamp, NetworkProtocol::Udp).await? {
                 self.add_event(event).await;
             }
         }
@@ -64,7 +63,7 @@ impl MacOSNetworkMonitor {
         Ok(())
     }
 
-    fn parse_netstat_line(&self, line: &str, timestamp: u64, protocol: NetworkProtocol) -> Result<Option<ConnectionEvent>> {
+    async fn parse_netstat_line(&self, line: &str, timestamp: u64, protocol: NetworkProtocol) -> Result<Option<ConnectionEvent>> {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 5 {
             return Ok(None);
@@ -181,11 +180,11 @@ impl MacOSNetworkMonitor {
                 .output()
                 .await
             {
-                let args = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !args.is_empty() {
-                    command_line = Some(args);
+                let args_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !args_str.is_empty() {
+                    command_line = Some(args_str.clone());
                     // First word is usually the executable
-                    if let Some(exe) = args.split_whitespace().next() {
+                    if let Some(exe) = args_str.split_whitespace().next() {
                         process_path = Some(exe.to_string());
                     }
                 }

@@ -14,7 +14,7 @@ use tokio::time::{interval, Duration};
 pub struct LinuxNetworkMonitor {
     events: Arc<Mutex<VecDeque<ConnectionEvent>>>,
     running: Arc<Mutex<bool>>,
-    pid_cache: Arc<Mutex<std::collections::HashMap<u32, (String, Option<String>, Option<String>, Option<String>)>>>,
+    pid_cache: Arc<Mutex<std::collections::HashMap<u32, (u32, String, Option<String>, Option<String>, Option<String>)>>>,
 }
 
 impl LinuxNetworkMonitor {
@@ -41,7 +41,7 @@ impl LinuxNetworkMonitor {
         // IPv4 TCP
         if let Ok(content) = fs::read_to_string("/proc/net/tcp") {
             for line in content.lines().skip(1) {
-                if let Some(event) = self.parse_proc_net_line(line, timestamp, NetworkProtocol::Tcp, false)? {
+                if let Some(event) = self.parse_proc_net_line(line, timestamp, NetworkProtocol::Tcp, false).await? {
                     self.add_event(event).await;
                 }
             }
@@ -50,7 +50,7 @@ impl LinuxNetworkMonitor {
         // IPv6 TCP
         if let Ok(content) = fs::read_to_string("/proc/net/tcp6") {
             for line in content.lines().skip(1) {
-                if let Some(event) = self.parse_proc_net_line(line, timestamp, NetworkProtocol::Tcp, true)? {
+                if let Some(event) = self.parse_proc_net_line(line, timestamp, NetworkProtocol::Tcp, true).await? {
                     self.add_event(event).await;
                 }
             }
@@ -63,7 +63,7 @@ impl LinuxNetworkMonitor {
         // IPv4 UDP
         if let Ok(content) = fs::read_to_string("/proc/net/udp") {
             for line in content.lines().skip(1) {
-                if let Some(event) = self.parse_proc_net_line(line, timestamp, NetworkProtocol::Udp, false)? {
+                if let Some(event) = self.parse_proc_net_line(line, timestamp, NetworkProtocol::Udp, false).await? {
                     self.add_event(event).await;
                 }
             }
@@ -72,7 +72,7 @@ impl LinuxNetworkMonitor {
         // IPv6 UDP
         if let Ok(content) = fs::read_to_string("/proc/net/udp6") {
             for line in content.lines().skip(1) {
-                if let Some(event) = self.parse_proc_net_line(line, timestamp, NetworkProtocol::Udp, true)? {
+                if let Some(event) = self.parse_proc_net_line(line, timestamp, NetworkProtocol::Udp, true).await? {
                     self.add_event(event).await;
                 }
             }
@@ -81,7 +81,7 @@ impl LinuxNetworkMonitor {
         Ok(())
     }
 
-    fn parse_proc_net_line(
+    async fn parse_proc_net_line(
         &self,
         line: &str,
         timestamp: u64,
