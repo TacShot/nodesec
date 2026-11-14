@@ -635,7 +635,57 @@ pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
         eframe::run_native(
             "Nodesec Network Monitor",
             options,
-            Box::new(|_cc| Ok(Box::new(app))),
+            Box::new(|cc| {
+                // Configure fonts to support Unicode/emoji characters
+                let mut fonts = egui::FontDefinitions::default();
+                
+                // Use system font as fallback for Unicode/emoji
+                // On macOS, use SF Pro + Apple Color Emoji
+                #[cfg(target_os = "macos")]
+                {
+                    if let Ok(data) = std::fs::read("/System/Library/Fonts/Supplemental/Apple Color Emoji.ttf") {
+                        fonts.font_data.insert("emoji".to_owned(), egui::FontData::from_owned(data));
+                        fonts.families
+                            .entry(egui::FontFamily::Proportional)
+                            .or_default()
+                            .insert(0, "emoji".to_owned());
+                    }
+                }
+                
+                #[cfg(target_os = "linux")]
+                {
+                    // Try Noto Color Emoji on Linux
+                    for path in [
+                        "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+                        "/usr/share/fonts/opentype/noto/NotoColorEmoji.ttf",
+                    ] {
+                        if let Ok(data) = std::fs::read(path) {
+                            fonts.font_data.insert("emoji".to_owned(), egui::FontData::from_owned(data));
+                            fonts.families
+                                .entry(egui::FontFamily::Proportional)
+                                .or_default()
+                                .insert(0, "emoji".to_owned());
+                            break;
+                        }
+                    }
+                }
+                
+                #[cfg(target_os = "windows")]
+                {
+                    // Windows 10+ has Segoe UI Emoji
+                    if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\seguiemj.ttf") {
+                        fonts.font_data.insert("emoji".to_owned(), egui::FontData::from_owned(data));
+                        fonts.families
+                            .entry(egui::FontFamily::Proportional)
+                            .or_default()
+                            .insert(0, "emoji".to_owned());
+                    }
+                }
+                
+                cc.egui_ctx.set_fonts(fonts);
+                
+                Ok(Box::new(app))
+            }),
         ).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     })
 }
