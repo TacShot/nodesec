@@ -10,7 +10,7 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, Paragraph, Table, Row, Cell, Tabs},
     Frame, Terminal,
 };
@@ -81,7 +81,7 @@ impl ThreatLevel {
             ThreatLevel::Critical => RED,
         }
     }
-    
+
     fn label(&self) -> &'static str {
         match self {
             ThreatLevel::Safe => "SAFE",
@@ -142,7 +142,7 @@ impl App {
         let connections_arc = Arc::new(Mutex::new(Vec::new()));
         let alerts_arc = Arc::new(Mutex::new(Vec::new()));
         let stats_arc = Arc::new(Mutex::new(ConnectionStats::default()));
-        
+
         Self {
             selected_tab: Tab::Connections,
             connections_arc: connections_arc.clone(),
@@ -173,13 +173,13 @@ impl App {
 
     async fn run(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
         let mut last_tick = Instant::now();
-        
+
         loop {
             // Refresh data from async sources
             self.refresh_data().await;
-            
+
             terminal.draw(|frame| self.render(frame))?;
-            
+
             // Handle incoming connections
             while let Ok(conn) = self.rx.try_recv() {
                 // Check for scan error marker
@@ -197,7 +197,7 @@ impl App {
                     self.add_connection(conn).await;
                 }
             }
-            
+
             // Handle events
             if event::poll(Duration::from_millis(50))? {
                 match event::read()? {
@@ -214,7 +214,7 @@ impl App {
                     _ => {}
                 }
             }
-            
+
             // Periodic stats update
             if last_tick.elapsed() >= Duration::from_secs(1) {
                 self.update_stats().await;
@@ -223,7 +223,7 @@ impl App {
         }
         Ok(())
     }
-    
+
     async fn handle_key(&mut self, key: KeyCode) -> Result<bool> {
         match key {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
@@ -275,42 +275,40 @@ impl App {
     }
 
     async fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) -> Result<()> {
-            use crossterm::event::{MouseEventKind, MouseButton};
+        let mouse_col = mouse.column as u16;
+        let mouse_row = mouse.row as u16;
 
-            let mouse_col = mouse.column as u16;
-            let mouse_row = mouse.row as u16;
-
-            match mouse.kind {
-                MouseEventKind::Down(MouseButton::Left) => {
-                    // Check tab bar clicks using pre-calculated regions
-                    if self.tabs_area.contains((mouse_col, mouse_row).into()) {
-                        for (i, region) in self.tab_regions.iter().enumerate() {
-                            if let Some((x_start, x_end)) = region {
-                                if mouse_col >= *x_start && mouse_col < *x_end {
-                                    self.selected_tab = match i {
-                                        0 => Tab::Connections,
-                                        1 => Tab::Alerts,
-                                        2 => Tab::Statistics,
-                                        3 => Tab::Settings,
-                                        _ => self.selected_tab,
-                                    };
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    // Check table row clicks (Connections tab only)
-                    else if self.selected_tab == Tab::Connections && self.table_area.contains((mouse_col, mouse_row).into()) {
-                        // Table has header at row 0, data starts at row 1 within table_area
-                        let relative_y = mouse_row.saturating_sub(self.table_area.y);
-                        if relative_y >= 1 {
-                            let row_index = (relative_y - 1) as usize + self.scroll_offset;
-                            if row_index < self.connections.len() {
-                                self.selected_connection = row_index;
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Check tab bar clicks using pre-calculated regions
+                if self.tabs_area.contains((mouse_col, mouse_row).into()) {
+                    for (i, region) in self.tab_regions.iter().enumerate() {
+                        if let Some((x_start, x_end)) = region {
+                            if mouse_col >= *x_start && mouse_col < *x_end {
+                                self.selected_tab = match i {
+                                    0 => Tab::Connections,
+                                    1 => Tab::Alerts,
+                                    2 => Tab::Statistics,
+                                    3 => Tab::Settings,
+                                    _ => self.selected_tab,
+                                };
+                                break;
                             }
                         }
                     }
                 }
+                // Check table row clicks (Connections tab only)
+                else if self.selected_tab == Tab::Connections && self.table_area.contains((mouse_col, mouse_row).into()) {
+                    // Table has header at row 0, data starts at row 1 within table_area
+                    let relative_y = mouse_row.saturating_sub(self.table_area.y);
+                    if relative_y >= 1 {
+                        let row_index = (relative_y - 1) as usize + self.scroll_offset;
+                        if row_index < self.connections.len() {
+                            self.selected_connection = row_index;
+                        }
+                    }
+                }
+            }
             MouseEventKind::ScrollUp => {
                 if self.scroll_offset > 0 {
                     self.scroll_offset -= 3;
@@ -323,22 +321,22 @@ impl App {
         }
         Ok(())
     }
-    
+
     async fn add_connection(&mut self, conn: NetworkConnection) {
         let threat_level = threat_level_from_score(conn.threat_score);
         let is_suspicious = conn.is_suspicious;
-        
+
         let mut connections = self.connections_arc.lock().await;
         connections.insert(0, ConnectionItem {
             connection: conn.clone(),
             threat_level,
         });
-        
+
         // Keep only last 1000 connections
         if connections.len() > 1000 {
             connections.truncate(1000);
         }
-        
+
         // Add alert if suspicious
         if is_suspicious {
             let mut alerts = self.alerts_arc.lock().await;
@@ -355,7 +353,7 @@ impl App {
                 alerts.truncate(100);
             }
         }
-        
+
         // Update stats
         let mut stats = self.stats_arc.lock().await;
         stats.total += 1;
@@ -366,7 +364,7 @@ impl App {
             stats.critical += 1;
         }
     }
-    
+
     async fn update_stats(&mut self) {
         let mut stats = self.stats_arc.lock().await;
         let connections = self.connections_arc.lock().await;
@@ -398,13 +396,13 @@ impl App {
     fn render_header(&self, frame: &mut Frame, area: Rect) {
         let status = if self.running { "LIVE" } else { "PAUSED" };
         let status_color = if self.running { GREEN } else { YELLOW };
-        
+
         let scan_indicator = if self.last_update.elapsed().as_secs() < 3 {
             " ● SCANNING"
         } else {
             ""
         };
-        
+
         let header = Paragraph::new(
             Line::from(vec![
                 Span::styled("NODESEC NETWORK", Style::default().fg(ORANGE).add_modifier(Modifier::BOLD)),
@@ -419,38 +417,49 @@ impl App {
         )
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(ORANGE)));
-        
+
         frame.render_widget(header, area);
     }
 
     fn render_tabs(&mut self, frame: &mut Frame, area: Rect) {
-            let tab_labels: Vec<&str> = [Tab::Connections, Tab::Alerts, Tab::Statistics, Tab::Settings]
-                .iter()
-                .map(|t| t.label())
-                .collect();
+        let tab_labels: Vec<&str> = [Tab::Connections, Tab::Alerts, Tab::Statistics, Tab::Settings]
+            .iter()
+            .map(|t| t.label())
+            .collect();
 
-            // Calculate tab regions for mouse hit testing
-            // Tabs widget renders with " | " divider between tabs
-            let divider = " | ";
-            let divider_width = divider.len() as u16;
-            let mut x = area.x + 1; // +1 for left border
-        
-            for (i, label) in tab_labels.iter().enumerate() {
-                let label_width = label.len() as u16;
-                let region_width = label_width + if i < tab_labels.len() - 1 { divider_width } else { 0 };
-                self.tab_regions[i] = Some((x, x + region_width));
-                x += label_width + if i < tab_labels.len() - 1 { divider_width } else { 0 };
-            }
+        // Calculate tab regions for mouse hit testing
+        // Tabs widget renders with " | " divider between tabs
+        // We divide the available width equally among tabs
+        let divider = " | ";
+        let divider_width = divider.len() as u16;
+        let total_width = area.width.saturating_sub(2); // Account for left/right borders
+        let tab_count = tab_labels.len() as u16;
+        let divider_total = divider_width * (tab_count.saturating_sub(1));
+        let content_width = total_width.saturating_sub(divider_total);
+        let equal_tab_width = content_width / tab_count;
 
-            let tabs = Tabs::new(tab_labels)
-                .select(self.selected_tab as usize)
-                .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::White)))
-                .style(Style::default().fg(GRAY))
-                .highlight_style(Style::default().fg(Color::White).bg(Color::Black).add_modifier(Modifier::BOLD))
-                .divider(Span::raw(" | "));
+        let mut x = area.x + 1; // +1 for left border
 
-            frame.render_widget(tabs, area);
+        for (i, label) in tab_labels.iter().enumerate() {
+            let label_width = label.len() as u16;
+            let region_width = if label_width > equal_tab_width {
+                label_width
+            } else {
+                equal_tab_width
+            } + if i < tab_labels.len() - 1 { divider_width } else { 0 };
+            self.tab_regions[i] = Some((x, x.saturating_add(region_width)));
+            x = x.saturating_add(label_width).saturating_add(if i < tab_labels.len() - 1 { divider_width } else { 0 });
         }
+
+        let tabs = Tabs::new(tab_labels)
+            .select(self.selected_tab as usize)
+            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::White)))
+            .style(Style::default().fg(GRAY))
+            .highlight_style(Style::default().fg(Color::White).bg(Color::Black).add_modifier(Modifier::BOLD))
+            .divider(Span::raw(" | "));
+
+        frame.render_widget(tabs, area);
+    }
 
     fn render_content(&mut self, frame: &mut Frame, area: Rect) {
         match self.selected_tab {
@@ -470,18 +479,18 @@ impl App {
             .map(|(i, item)| {
                 let conn = &item.connection;
                 let threat_color = item.threat_level.color();
-                
+
                 let src = format!("{}:{}", conn.src_ip, conn.src_port);
                 let dst = format!("{}:{}", conn.dst_ip, conn.dst_port);
                 let proto = format!("{:?}", conn.protocol);
-                
+
                 let selected = i == self.selected_connection;
                 let style = if selected {
                     Style::default().fg(Color::White).bg(Color::Black).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(GRAY)
                 };
-                
+
                 Row::new(vec![
                     Cell::from(conn.pid.to_string()),
                     Cell::from(conn.process_name.clone()),
@@ -493,7 +502,7 @@ impl App {
                 ]).style(style)
             })
             .collect();
-        
+
         let header = Row::new(vec![
             Cell::from("PID").style(Style::default().fg(ORANGE).add_modifier(Modifier::BOLD)),
             Cell::from("Process").style(Style::default().fg(ORANGE).add_modifier(Modifier::BOLD)),
@@ -503,7 +512,7 @@ impl App {
             Cell::from("Threat").style(Style::default().fg(ORANGE).add_modifier(Modifier::BOLD)),
             Cell::from("Score").style(Style::default().fg(ORANGE).add_modifier(Modifier::BOLD)),
         ]);
-        
+
         let table = Table::new(rows, [
             Constraint::Length(6),
             Constraint::Length(20),
@@ -519,7 +528,7 @@ impl App {
             .title("Live Connections")
             .border_style(Style::default().fg(Color::White)))
         .column_spacing(1);
-        
+
         frame.render_widget(table, area);
     }
 
@@ -531,13 +540,13 @@ impl App {
                 ListItem::new(Line::from(Span::styled(alert, Style::default().fg(RED))))
             }).collect()
         };
-        
+
         let list = List::new(items)
             .block(Block::default()
                 .borders(Borders::ALL)
                 .title("Threat Alerts")
                 .border_style(Style::default().fg(RED)));
-        
+
         frame.render_widget(list, area);
     }
 
@@ -546,7 +555,7 @@ impl App {
         for item in &self.connections {
             *counts.entry(item.threat_level).or_insert(0) += 1;
         }
-        
+
         let text = vec![
             Line::from(vec![
                 Span::styled("Total Connections: ", Style::default().fg(ORANGE)),
@@ -589,13 +598,13 @@ impl App {
                 Span::styled(counts.get(&ThreatLevel::Critical).unwrap_or(&0).to_string(), Style::default().fg(Color::White)),
             ]),
         ];
-        
+
         let paragraph = Paragraph::new(text)
             .block(Block::default()
                 .borders(Borders::ALL)
                 .title("Statistics")
                 .border_style(Style::default().fg(Color::White)));
-        
+
         frame.render_widget(paragraph, area);
     }
 
@@ -628,14 +637,14 @@ impl App {
             Line::from(""),
             Line::from("Press 'q' to quit, Tab to switch tabs"),
         ];
-        
+
         let paragraph = Paragraph::new(text)
             .block(Block::default()
                 .borders(Borders::ALL)
                 .title("Settings")
                 .border_style(Style::default().fg(Color::White)))
             .wrap(ratatui::widgets::Wrap { trim: true });
-        
+
         frame.render_widget(paragraph, area);
     }
 
@@ -651,7 +660,7 @@ impl App {
         )
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(GRAY)));
-        
+
         frame.render_widget(footer, area);
     }
 }
@@ -746,7 +755,7 @@ pub async fn run_net_tui(_interface: Option<String>, interval: u64) -> Result<()
     // Use raw escape sequences to ensure they're sent correctly on macOS
     let mut stdout_handle = std::io::stdout();
     // Disable mouse tracking modes in order
-    let _ = execute!(stdout_handle, 
+    let _ = execute!(stdout_handle,
         crossterm::terminal::LeaveAlternateScreen,
         crossterm::event::DisableMouseCapture
     );
@@ -754,7 +763,7 @@ pub async fn run_net_tui(_interface: Option<String>, interval: u64) -> Result<()
     use std::io::Write;
     let _ = stdout_handle.write_all(b"\x1b[?1006l\x1b[?1000l\x1b[?1003l");
     let _ = stdout_handle.flush();
-    
+
     drop(terminal);
     disable_raw_mode()?;
 
