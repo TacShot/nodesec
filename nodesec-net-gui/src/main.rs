@@ -474,19 +474,15 @@ impl eframe::App for App {
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
-                let available_width = ui.available_width() - 10.0;
-                let tab_width = available_width / 7.0;
                 for tab in [
                     Tab::Dashboard, Tab::Connections, Tab::ProcessTree,
                     Tab::ConnectionGraph, Tab::Alerts, Tab::Statistics, Tab::Settings
                 ] {
                     let selected = self.selected_tab == tab;
-                    let response = ui.add_sized([tab_width, 0.0], |ui: &mut egui::Ui| {
-                        ui.selectable_label(selected, tab.label())
-                    });
-                    if response.clicked() {
+                    if ui.selectable_label(selected, tab.label()).clicked() {
                         self.selected_tab = tab;
                     }
+                    ui.add_space(8.0);
                 }
             });
         });

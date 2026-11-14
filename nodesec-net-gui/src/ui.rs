@@ -112,22 +112,20 @@ pub fn render_connections_table(
                     let dst = format!("{}:{}", conn.dst_ip, conn.dst_port);
                     let proto = format!("{:?}", conn.protocol);
                     let time = chrono::DateTime::from_timestamp(conn.timestamp as i64, 0)
-                        .map(|dt| dt.format("%H:%M:%S").to_string())
-                        .unwrap_or_default();
+                                            .map(|dt| dt.format("%H:%M:%S").to_string())
+                                            .unwrap_or_default();
+                   
+                                        // Use a selectable area for the entire row
+                                        let row_rect = ui.max_rect();
+                                        let response = ui.allocate_rect(row_rect, egui::Sense::click());
                     
-                    let is_selected = *selected_connection == Some(i);
-                    
-                    // Use a selectable area for the entire row
-                    let row_rect = ui.max_rect();
-                    let response = ui.allocate_rect(row_rect, egui::Sense::click());
-                    
-                    if response.clicked() {
-                        *selected_connection = Some(i);
-                    }
-                    
-                    // Selection checkbox
-                    ui.selectable_value(&mut *selected_connection, Some(i), "");
-                    ui.label(time);
+                                        if response.clicked() {
+                                            *selected_connection = Some(i);
+                                        }
+                   
+                                        // Selection checkbox
+                                        ui.selectable_value(&mut *selected_connection, Some(i), "");
+                                        ui.label(time);
                     ui.label(conn.pid.to_string());
                     ui.label(&conn.process_name);
                     ui.label(proto);
