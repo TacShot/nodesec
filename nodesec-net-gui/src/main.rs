@@ -163,6 +163,7 @@ impl App {
                 self.monitor_state.alerts.lock().unwrap().clear();
                 self.connection_history.lock().unwrap().clear();
                 self.threat_history.lock().unwrap().clear();
+                self.selected_connection = None;
             }
 
             ui.separator();
@@ -181,8 +182,8 @@ impl App {
 
         ui.separator();
 
-        // Connections table with filter
-        let connections = self.monitor_state.connections.lock().unwrap();
+        // Clone connections to avoid borrow issues with MutexGuard
+        let connections = self.monitor_state.connections.lock().unwrap().clone();
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             crate::ui::render_connections_table(ui, &connections, &mut self.selected_connection, &mut self.filter);
@@ -193,6 +194,9 @@ impl App {
             if idx < connections.len() {
                 ui.separator();
                 crate::ui::render_connection_detail(ui, &connections[idx], &self.monitor_state);
+            } else {
+                // Selected index is out of bounds, clear it
+                self.selected_connection = None;
             }
         }
     }

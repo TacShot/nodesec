@@ -147,25 +147,161 @@ impl ConnectionGraph {
         sorted.sort_by(|a, b| b.connection.threat_score.cmp(&a.connection.threat_score));
         let limited: Vec<crate::state::ConnectionItem> = sorted
             .into_iter()
-            .take(200) // Limit to top 200 connections by threat score
+            .take(150) // Limit to top 150 connections by threat score
             .collect();
 
-        // Run layout in background thread to avoid freezing UI
+        // Build nodes synchronously to avoid race conditions with render thread
+        let mut nodes = self.nodes.lock().unwrap();
+        let mut edges = self.edges.lock().unwrap();
+
+        let old_positions: HashMap<String, Pos2> = nodes.iter()
+            .map(|(k, v)| (k.clone(), v.pos))
+            .collect();
+
+        nodes.clear();
+        edges.clear();
+
+        let mut process_connections: HashMap<u32, Vec<&nodesec_core::models::NetworkConnection>> = HashMap::new();
+        for item in &limited {
+            process_connections
+                .entry(item.connection.pid)
+                .or_default()
+                .push(&item.connection);
+        }
+
+        let mut interface_groups: HashMap<String, Vec<u32>> = HashMap::new();
+
+        for (pid, conns) in &process_connections {
+            let first = conns[0];
+            let avg_threat = conns.iter().map(|c| c.threat_score as u32).sum::<u32>() / conns.len() as u32;
+            let is_suspicious = conns.iter().any(|c| c.is_suspicious);
+
+            let color = if is_suspicious {
+                if avg_threat > 75 { Color32::RED } else { Color32::from_rgb(255, 165, 0) }
+            } else {
+                Color32::from_rgb(0, 200, 100)
+            };
+
+            let conn_type = ConnectionType::from_connection(first);
+            let interface_key = conn_type.label().to_string();
+            interface_groups.entry(interface_key.clone()).or_default().push(*pid);
+
+            let node = GraphNode {
+                id: format!("proc_{}", pid),
+                label: if first.process_name.is_empty() { "unknown".to_string() } else { first.process_name.clone() },
+                pos: old_positions.get(&format!("proc_{}", pid)).cloned().unwrap_or(Pos2::ZERO),
+                target_pos: Pos2::ZERO,
+                color,
+                size: 30.0 + (conns.len() as f32 * 2.0).min(50.0),
+                is_process: true,
+                threat_score: avg_threat as u8,
+                connections: conns.len(),
+                pid: Some(*pid),
+                process_name: first.process_name.clone(),
+                interface: Some(interface_key),
+                connection_type: ConnectionType::Process,
+                remote_ip: None,
+                remote_port: None,
+            };
+            nodes.insert(node.id.clone(), node);
+        }
+
+        let mut remote_hosts: HashMap<String, (String, u16, Vec<&nodesec_core::models::NetworkConnection>, ConnectionType)> = HashMap::new();
+
+        for item in &limited {
+            let conn = &item.connection;
+            let remote_key = format!("{}:{}", conn.dst_ip, conn.dst_port);
+            let conn_type = ConnectionType::from_connection(conn);
+
+            remote_hosts
+                .entry(remote_key.clone())
+                .or_insert_with(|| (conn.dst_ip.to_string(), conn.dst_port, Vec::new(), conn_type))
+                .2.push(conn);
+        }
+
+        for (key, (ip, port, conns, conn_type)) in remote_hosts {
+            let avg_threat = conns.iter().map(|c| c.threat_score as u32).sum::<u32>() / conns.len() as u32;
+            let is_suspicious = conns.iter().any(|c| c.is_suspicious);
+
+            let color = if is_suspicious {
+                if avg_threat > 75 { Color32::RED } else { Color32::from_rgb(255, 165, 0) }
+            } else {
+                conn_type.color()
+            };
+
+            let node = GraphNode {
+                id: format!("host_{}", key),
+                label: format!("{}:{}", ip, port),
+                pos: old_positions.get(&format!("host_{}", key)).cloned().unwrap_or(Pos2::ZERO),
+                target_pos: Pos2::ZERO,
+                color,
+                size: 20.0,
+                is_process: false,
+                threat_score: avg_threat as u8,
+                connections: conns.len(),
+                pid: None,
+                process_name: String::new(),
+                interface: Some(conn_type.label().to_string()),
+                connection_type: conn_type.clone(),
+                remote_ip: Some(ip.clone()),
+                remote_port: Some(port),
+            };
+            nodes.insert(node.id.clone(), node);
+
+            let mut process_ids: HashSet<u32> = HashSet::new();
+            for conn in conns {
+                process_ids.insert(conn.pid);
+            }
+
+            for pid in process_ids {
+                edges.push(GraphEdge {
+                    from: format!("proc_{}", pid),
+                    to: format!("host_{}", key),
+                    color: if is_suspicious { Color32::RED } else { Color32::from_rgb(100, 100, 100) },
+                    thickness: 1.5,
+                });
+            }
+        }
+
+        drop(nodes);
+        drop(edges);
+
+        // Run layout synchronously but limit iterations for performance
+        self.run_layout_sync();
+    }
+
+    // Run force-directed layout synchronously on existing nodes
+    fn run_layout_sync(&self) {
         let nodes = self.nodes.clone();
         let edges = self.edges.clone();
         let center_pos = self.center_pos.clone();
-        let layout_dirty = self.layout_dirty.clone();
-        let connections_data = limited;
 
-        std::thread::spawn(move || {
-            if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                Self::run_layout_static(
-                    nodes, edges, center_pos, layout_dirty, connections_data
+        // Simple synchronous layout - just arrange nodes in a grid pattern
+        // to avoid O(n^2) force-directed calculations that freeze UI
+        let nodes_lock = nodes.lock().unwrap();
+        let node_ids: Vec<String> = nodes_lock.keys().cloned().collect();
+        drop(nodes_lock);
+
+        if node_ids.is_empty() {
+            return;
+        }
+
+        let cols = (node_ids.len() as f64).sqrt().ceil() as usize;
+        let cell_size = 80.0;
+        let center = *center_pos.lock().unwrap();
+
+        let mut nodes_lock = nodes.lock().unwrap();
+        for (i, node_id) in node_ids.iter().enumerate() {
+            if let Some(node) = nodes_lock.get_mut(node_id) {
+                let row = i / cols;
+                let col = i % cols;
+                node.pos = Pos2::new(
+                    center.x + (col as f32 - cols as f32 / 2.0) * cell_size,
+                    center.y + (row as f32 - (node_ids.len() / cols + 1) as f32 / 2.0) * cell_size,
                 );
-            })) {
-                eprintln!("Graph layout error: {:?}", e);
+                node.target_pos = node.pos;
             }
-        });
+        }
     }
     
     fn update_node_attributes(&self, connections: &[crate::state::ConnectionItem]) {
