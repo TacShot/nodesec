@@ -133,25 +133,38 @@ impl ConnectionGraph {
         let mut last_count = self.last_connection_count.lock().unwrap();
         let count_changed = (conn_count as i32 - *last_count as i32).abs() > 3;
         *last_count = conn_count;
-        
+
         if !count_changed && !*self.layout_dirty.lock().unwrap() {
             self.update_node_attributes(connections);
             return;
         }
-        
+
         *self.layout_dirty.lock().unwrap() = false;
-        
+
+        // Limit connections to prevent graph overload with too many nodes
+        // Sort by threat score to show most important connections first
+        let mut sorted: Vec<crate::state::ConnectionItem> = connections.iter().cloned().collect();
+        sorted.sort_by(|a, b| b.connection.threat_score.cmp(&a.connection.threat_score));
+        let limited: Vec<crate::state::ConnectionItem> = sorted
+            .into_iter()
+            .take(200) // Limit to top 200 connections by threat score
+            .collect();
+
         // Run layout in background thread to avoid freezing UI
         let nodes = self.nodes.clone();
         let edges = self.edges.clone();
         let center_pos = self.center_pos.clone();
         let layout_dirty = self.layout_dirty.clone();
-        let connections_data = connections.to_vec();
-        
+        let connections_data = limited;
+
         std::thread::spawn(move || {
-            Self::run_layout_static(
-                nodes, edges, center_pos, layout_dirty, connections_data
-            );
+            if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                Self::run_layout_static(
+                    nodes, edges, center_pos, layout_dirty, connections_data
+                );
+            })) {
+                eprintln!("Graph layout error: {:?}", e);
+            }
         });
     }
     
