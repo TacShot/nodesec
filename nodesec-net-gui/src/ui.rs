@@ -88,7 +88,7 @@ pub fn render_connections_table(
             .striped(true)
             .min_col_width(80.0)
             .show(ui, |ui| {
-                // Header
+                // Header - 9 columns including selection
                 ui.label(egui::RichText::new("Sel").color(ORANGE).strong());
                 ui.label(egui::RichText::new("Time").color(ORANGE).strong());
                 ui.label(egui::RichText::new("PID").color(ORANGE).strong());
@@ -116,12 +116,17 @@ pub fn render_connections_table(
                         .unwrap_or_default();
                     
                     let is_selected = *selected_connection == Some(i);
-                    let response = ui.selectable_label(is_selected, if is_selected { "✓" } else { "" });
+                    
+                    // Use a selectable area for the entire row
+                    let row_rect = ui.max_rect();
+                    let response = ui.allocate_rect(row_rect, egui::Sense::click());
                     
                     if response.clicked() {
                         *selected_connection = Some(i);
                     }
                     
+                    // Selection checkbox
+                    ui.selectable_value(&mut *selected_connection, Some(i), "");
                     ui.label(time);
                     ui.label(conn.pid.to_string());
                     ui.label(&conn.process_name);
@@ -749,7 +754,8 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
             .striped(true)
             .min_col_width(100.0)
             .show(ui, |ui| {
-                // Header
+                // Header - 7 columns
+                ui.label(egui::RichText::new("✓").color(ORANGE).strong());
                 ui.label(egui::RichText::new("Process").color(ORANGE).strong());
                 ui.label(egui::RichText::new("PID").color(ORANGE).strong());
                 ui.label(egui::RichText::new("User").color(ORANGE).strong());
@@ -792,7 +798,10 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                     
                     let is_selected = selected_process.as_ref() == Some(&proc.pid);
                     
-                    let response = ui.selectable_label(is_selected, "");
+                    // Use a selectable area for the entire row
+                    let row_rect = ui.max_rect();
+                    let response = ui.allocate_rect(row_rect, egui::Sense::click());
+                    
                     if response.clicked() {
                         *selected_process = Some(proc.pid);
                     }
@@ -800,9 +809,10 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                         *selected_process = Some(proc.pid);
                     }
                     
-                    // Process name with icon
+                    // Selection checkbox
+                    let icon = if proc.is_suspicious { "⚠️ " } else { "✓ " };
                     ui.horizontal(|ui| {
-                        let icon = if proc.is_suspicious { "⚠️ " } else { "✓ " };
+                        ui.selectable_value(&mut *selected_process, Some(proc.pid), "");
                         ui.label(egui::RichText::new(format!("{}{}", icon, proc.name)).color(if is_selected { YELLOW } else { WHITE }).size(12.0).strong());
                     });
                     ui.label(proc.pid.to_string());
