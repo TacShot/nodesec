@@ -725,17 +725,24 @@ pub fn render_dashboard(
 pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::MonitorState, filter: &mut FilterSettings, selected_process: &mut Option<u32>) {
     let connections = monitor_state.connections.lock().unwrap();
     let processes = ProcessTreeItem::from_connections(&connections);
-    
+
     if processes.is_empty() {
-        ui.centered_and_justified(|ui| {
-            ui.label(egui::RichText::new("No processes with network connections").color(GRAY));
-        });
+        let conn_count = connections.len();
+        if conn_count > 0 {
+            ui.centered_and_justified(|ui| {
+                ui.label(egui::RichText::new(format!("{} connections captured but no process info available (PID resolution may require elevated privileges)", conn_count)).color(GRAY));
+            });
+        } else {
+            ui.centered_and_justified(|ui| {
+                ui.label(egui::RichText::new("No processes with network connections").color(GRAY));
+            });
+        }
         return;
     }
-    
+
     ui.heading(egui::RichText::new("Process Network Tree").color(ORANGE));
     ui.separator();
-    
+
     // Toolbar
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Click row to select • Right-click for actions").color(GRAY).size(11.0));
@@ -746,14 +753,14 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
         });
     });
     ui.separator();
-    
+
     egui::ScrollArea::vertical().show(ui, |ui| {
         egui::Grid::new("process_tree")
             .striped(true)
             .min_col_width(100.0)
             .show(ui, |ui| {
-                // Header - 7 columns
-                ui.label(egui::RichText::new("✓").color(ORANGE).strong());
+                // Header - 7 columns: select, process, pid, user, connections, threat, status
+                ui.label(egui::RichText::new("").color(ORANGE).strong()); // select column
                 ui.label(egui::RichText::new("Process").color(ORANGE).strong());
                 ui.label(egui::RichText::new("PID").color(ORANGE).strong());
                 ui.label(egui::RichText::new("User").color(ORANGE).strong());
@@ -761,7 +768,7 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                 ui.label(egui::RichText::new("Max Threat").color(ORANGE).strong());
                 ui.label(egui::RichText::new("Status").color(ORANGE).strong());
                 ui.end_row();
-                
+
                 for proc in processes {
                     // Apply filter
                     let mut matches = true;
@@ -781,11 +788,11 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                     if proc.total_threat_score < filter.min_threat_score || proc.total_threat_score > filter.max_threat_score {
                         matches = false;
                     }
-                    
+
                     if !matches {
                         continue;
                     }
-                    
+
                     let threat_color = match proc.total_threat_score {
                         0..=25 => GREEN,
                         26..=49 => YELLOW,
@@ -793,72 +800,72 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                         75..=89 => egui::Color32::from_rgb(255, 100, 100),
                         _ => RED,
                     };
-                    
+
                     let is_selected = selected_process.as_ref() == Some(&proc.pid);
-                    
-                    // Use a selectable area for the entire row
-                    let row_rect = ui.max_rect();
-                    let response = ui.allocate_rect(row_rect, egui::Sense::click());
-                    
+
+                    // Use selectable_label for the entire row click area
+                    let process_display = if proc.name.is_empty() {
+                        "unknown".to_string()
+                    } else {
+                        proc.name.clone()
+                    };
+                    let icon = if proc.is_suspicious { "⚠ " } else { "✓ " };
+                    let label_text = format!("{}{}", icon, process_display);
+
+                    let response = ui.selectable_label(is_selected, label_text);
                     if response.clicked() {
                         *selected_process = Some(proc.pid);
                     }
                     if response.secondary_clicked() {
                         *selected_process = Some(proc.pid);
                     }
-                    
-                    // Selection checkbox
-                    let icon = if proc.is_suspicious { "⚠️ " } else { "✓ " };
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(&mut *selected_process, Some(proc.pid), "");
-                        ui.label(egui::RichText::new(format!("{}{}", icon, proc.name)).color(if is_selected { YELLOW } else { WHITE }).size(12.0).strong());
-                    });
+
                     ui.label(proc.pid.to_string());
                     ui.label(proc.user.as_deref().unwrap_or("N/A"));
                     ui.label(proc.connections.len().to_string());
                     ui.colored_label(threat_color, proc.total_threat_score.to_string());
                     ui.colored_label(threat_color, if proc.is_suspicious { "SUSPICIOUS" } else { "OK" });
                     ui.end_row();
-                    
+
                     // Context menu for process row
                     response.context_menu(|ui| {
-                        ui.heading(format!("{} (PID: {})", proc.name, proc.pid));
+                        ui.heading(format!("{} (PID: {})", process_display, proc.pid));
                         ui.separator();
-                        
+
                         if let Some(path) = &proc.path {
                             ui.label(format!("Path: {}", path));
                             ui.separator();
                         }
-                        
-                        if ui.button("🔴 Terminate Process").clicked() {
-                            crate::ui::terminate_process(proc.pid, &proc.name, monitor_state);
+
+                        if ui.button("Terminate Process").clicked() {
+                            crate::ui::terminate_process(proc.pid, &process_display, monitor_state);
                             ui.close_menu();
                         }
-                        if ui.button("🚫 Block All Ports").clicked() {
+                        if ui.button("Block All Ports").clicked() {
                             ui.close_menu();
                         }
-                        if ui.button("📋 Copy PID").clicked() {
+                        if ui.button("Copy PID").clicked() {
                             ui.output_mut(|o| o.copied_text = proc.pid.to_string());
                             ui.close_menu();
                         }
-                        if ui.button("📋 Copy Process Name").clicked() {
-                            ui.output_mut(|o| o.copied_text = proc.name.clone());
+                        if ui.button("Copy Process Name").clicked() {
+                            ui.output_mut(|o| o.copied_text = process_display.clone());
                             ui.close_menu();
                         }
                         if let Some(path) = &proc.path {
-                            if ui.button("📋 Copy Path").clicked() {
+                            if ui.button("Copy Path").clicked() {
                                 ui.output_mut(|o| o.copied_text = path.clone());
                                 ui.close_menu();
                             }
                         }
-                        
+
                         ui.separator();
-                        if ui.button("🔍 Show Connections").clicked() {
+                        if ui.button("Show Connections").clicked() {
                             *selected_process = Some(proc.pid);
                             ui.close_menu();
                         }
                     });
-                    
+
                     // Show connection details inline for selected process
                     if is_selected {
                         ui.add_space(4.0);
@@ -870,7 +877,7 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                         }
                         ui.separator();
                         ui.label(egui::RichText::new("Network Connections:").color(WHITE).strong().size(11.0));
-                        
+
                         egui::Grid::new(format!("proc_conns_{}", proc.pid))
                             .striped(true)
                             .min_col_width(80.0)
@@ -880,7 +887,7 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                                 ui.label(egui::RichText::new("Destination").color(ORANGE).strong().size(11.0));
                                 ui.label(egui::RichText::new("Threat").color(ORANGE).strong().size(11.0));
                                 ui.end_row();
-                                
+
                                 for conn in &proc.connections {
                                     let proto = format!("{:?}", conn.protocol);
                                     let src = format!("{}:{}", conn.src_ip, conn.src_port);
@@ -892,7 +899,7 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                                         75..=89 => egui::Color32::from_rgb(255, 100, 100),
                                         _ => RED,
                                     };
-                                    
+
                                     ui.label(egui::RichText::new(proto).size(11.0));
                                     ui.label(egui::RichText::new(src).size(11.0));
                                     ui.label(egui::RichText::new(dst).size(11.0));
