@@ -141,119 +141,18 @@ impl ConnectionGraph {
         
         *self.layout_dirty.lock().unwrap() = false;
         
-        let mut nodes = self.nodes.lock().unwrap();
-        let mut edges = self.edges.lock().unwrap();
+        // Run layout in background thread to avoid freezing UI
+        let nodes = self.nodes.clone();
+        let edges = self.edges.clone();
+        let center_pos = self.center_pos.clone();
+        let layout_dirty = self.layout_dirty.clone();
+        let connections_data = connections.to_vec();
         
-        let old_positions: HashMap<String, Pos2> = nodes.iter()
-            .map(|(k, v)| (k.clone(), v.pos))
-            .collect();
-        
-        nodes.clear();
-        edges.clear();
-        
-        let mut process_connections: HashMap<u32, Vec<&NetworkConnection>> = HashMap::new();
-        for item in connections {
-            process_connections
-                .entry(item.connection.pid)
-                .or_default()
-                .push(&item.connection);
-        }
-        
-        let mut interface_groups: HashMap<String, Vec<u32>> = HashMap::new();
-        
-        for (pid, conns) in &process_connections {
-            let first = conns[0];
-            let avg_threat = conns.iter().map(|c| c.threat_score as u32).sum::<u32>() / conns.len() as u32;
-            let is_suspicious = conns.iter().any(|c| c.is_suspicious);
-            
-            let color = if is_suspicious {
-                if avg_threat > 75 { Color32::RED } else { Color32::from_rgb(255, 165, 0) }
-            } else {
-                Color32::from_rgb(0, 200, 100)
-            };
-            
-            let conn_type = ConnectionType::from_connection(first);
-            let interface_key = conn_type.label().to_string();
-            interface_groups.entry(interface_key.clone()).or_default().push(*pid);
-            
-            let node = GraphNode {
-                id: format!("proc_{}", pid),
-                label: format!("{} (PID: {})", first.process_name, pid),
-                pos: old_positions.get(&format!("proc_{}", pid)).cloned().unwrap_or(Pos2::ZERO),
-                target_pos: Pos2::ZERO,
-                color,
-                size: 30.0 + (conns.len() as f32 * 2.0).min(50.0),
-                is_process: true,
-                threat_score: avg_threat as u8,
-                connections: conns.len(),
-                pid: Some(*pid),
-                process_name: first.process_name.clone(),
-                interface: Some(interface_key),
-                connection_type: ConnectionType::Process,
-                remote_ip: None,
-                remote_port: None,
-            };
-            nodes.insert(node.id.clone(), node);
-        }
-        
-        let mut remote_hosts: HashMap<String, (String, u16, Vec<&NetworkConnection>, ConnectionType)> = HashMap::new();
-        
-        for item in connections {
-            let conn = &item.connection;
-            let remote_key = format!("{}:{}", conn.dst_ip, conn.dst_port);
-            let conn_type = ConnectionType::from_connection(conn);
-            
-            remote_hosts
-                .entry(remote_key.clone())
-                .or_insert_with(|| (conn.dst_ip.to_string(), conn.dst_port, Vec::new(), conn_type))
-                .2.push(conn);
-        }
-        
-        for (key, (ip, port, conns, conn_type)) in remote_hosts {
-            let avg_threat = conns.iter().map(|c| c.threat_score as u32).sum::<u32>() / conns.len() as u32;
-            let is_suspicious = conns.iter().any(|c| c.is_suspicious);
-            
-            let color = if is_suspicious {
-                if avg_threat > 75 { Color32::RED } else { Color32::from_rgb(255, 165, 0) }
-            } else {
-                conn_type.color()
-            };
-            
-            let node = GraphNode {
-                id: format!("host_{}", key),
-                label: format!("{}:{}", ip, port),
-                pos: old_positions.get(&format!("host_{}", key)).cloned().unwrap_or(Pos2::ZERO),
-                target_pos: Pos2::ZERO,
-                color,
-                size: 20.0,
-                is_process: false,
-                threat_score: avg_threat as u8,
-                connections: conns.len(),
-                pid: None,
-                process_name: String::new(),
-                interface: Some(conn_type.label().to_string()),
-                connection_type: conn_type.clone(),
-                remote_ip: Some(ip.clone()),
-                remote_port: Some(port),
-            };
-            nodes.insert(node.id.clone(), node);
-            
-            let mut process_ids: HashSet<u32> = HashSet::new();
-            for conn in conns {
-                process_ids.insert(conn.pid);
-            }
-            
-            for pid in process_ids {
-                edges.push(GraphEdge {
-                    from: format!("proc_{}", pid),
-                    to: format!("host_{}", key),
-                    color: if is_suspicious { Color32::RED } else { Color32::from_rgb(100, 100, 100) },
-                    thickness: 1.5,
-                });
-            }
-        }
-        
-        self.run_layout(&mut nodes, &edges);
+        std::thread::spawn(move || {
+            Self::run_layout_static(
+                nodes, edges, center_pos, layout_dirty, connections_data
+            );
+        });
     }
     
     fn update_node_attributes(&self, connections: &[crate::state::ConnectionItem]) {
@@ -403,10 +302,235 @@ impl ConnectionGraph {
         }
         
         *self.layout_iteration.lock().unwrap() += 1;
-        *self.last_update.lock().unwrap() = Instant::now();
+                *self.last_update.lock().unwrap() = Instant::now();
+            }
+
+            // Static version for background thread
+                fn run_layout_static(
+                    nodes: Arc<Mutex<HashMap<String, GraphNode>>>,
+                    edges: Arc<Mutex<Vec<GraphEdge>>>,
+                    center_pos: Arc<Mutex<Pos2>>,
+                    layout_dirty: Arc<Mutex<bool>>,
+                    connections: Vec<crate::state::ConnectionItem>,
+                ) {
+                let mut nodes_lock = nodes.lock().unwrap();
+                let mut edges_lock = edges.lock().unwrap();
+
+                let old_positions: HashMap<String, Pos2> = nodes_lock.iter()
+                    .map(|(k, v)| (k.clone(), v.pos))
+                    .collect();
+
+                nodes_lock.clear();
+                edges_lock.clear();
+
+                let mut process_connections: HashMap<u32, Vec<&NetworkConnection>> = HashMap::new();
+                for item in &connections {
+                    process_connections
+                        .entry(item.connection.pid)
+                        .or_default()
+                        .push(&item.connection);
+                }
+
+                let mut interface_groups: HashMap<String, Vec<u32>> = HashMap::new();
+
+                for (pid, conns) in &process_connections {
+                    let first = conns[0];
+                    let avg_threat = conns.iter().map(|c| c.threat_score as u32).sum::<u32>() / conns.len() as u32;
+                    let is_suspicious = conns.iter().any(|c| c.is_suspicious);
+
+                    let color = if is_suspicious {
+                        if avg_threat > 75 { Color32::RED } else { Color32::from_rgb(255, 165, 0) }
+                    } else {
+                        Color32::from_rgb(0, 200, 100)
+                    };
+
+                    let conn_type = ConnectionType::from_connection(first);
+                    let interface_key = conn_type.label().to_string();
+                    interface_groups.entry(interface_key.clone()).or_default().push(*pid);
+
+                    let node = GraphNode {
+                        id: format!("proc_{}", pid),
+                        label: format!("{} (PID: {})", first.process_name, pid),
+                        pos: old_positions.get(&format!("proc_{}", pid)).cloned().unwrap_or(Pos2::ZERO),
+                        target_pos: Pos2::ZERO,
+                        color,
+                        size: 30.0 + (conns.len() as f32 * 2.0).min(50.0),
+                        is_process: true,
+                        threat_score: avg_threat as u8,
+                        connections: conns.len(),
+                        pid: Some(*pid),
+                        process_name: first.process_name.clone(),
+                        interface: Some(interface_key),
+                        connection_type: ConnectionType::Process,
+                        remote_ip: None,
+                        remote_port: None,
+                    };
+                    nodes_lock.insert(node.id.clone(), node);
+                }
+
+                let mut remote_hosts: HashMap<String, (String, u16, Vec<&NetworkConnection>, ConnectionType)> = HashMap::new();
+
+                for item in &connections {
+                    let conn = &item.connection;
+                    let remote_key = format!("{}:{}", conn.dst_ip, conn.dst_port);
+                    let conn_type = ConnectionType::from_connection(conn);
+
+                    remote_hosts
+                        .entry(remote_key.clone())
+                        .or_insert_with(|| (conn.dst_ip.to_string(), conn.dst_port, Vec::new(), conn_type))
+                        .2.push(conn);
+                }
+
+                for (key, (ip, port, conns, conn_type)) in remote_hosts {
+                    let avg_threat = conns.iter().map(|c| c.threat_score as u32).sum::<u32>() / conns.len() as u32;
+                    let is_suspicious = conns.iter().any(|c| c.is_suspicious);
+
+                    let color = if is_suspicious {
+                        if avg_threat > 75 { Color32::RED } else { Color32::from_rgb(255, 165, 0) }
+                    } else {
+                        conn_type.color()
+                    };
+
+                    let node = GraphNode {
+                        id: format!("host_{}", key),
+                        label: format!("{}:{}", ip, port),
+                        pos: old_positions.get(&format!("host_{}", key)).cloned().unwrap_or(Pos2::ZERO),
+                        target_pos: Pos2::ZERO,
+                        color,
+                        size: 20.0,
+                        is_process: false,
+                        threat_score: avg_threat as u8,
+                        connections: conns.len(),
+                        pid: None,
+                        process_name: String::new(),
+                        interface: Some(conn_type.label().to_string()),
+                        connection_type: conn_type.clone(),
+                        remote_ip: Some(ip.clone()),
+                        remote_port: Some(port),
+                    };
+                    nodes_lock.insert(node.id.clone(), node);
+
+                    let mut process_ids: HashSet<u32> = HashSet::new();
+                    for conn in conns {
+                        process_ids.insert(conn.pid);
+                    }
+
+                    for pid in process_ids {
+                        edges_lock.push(GraphEdge {
+                            from: format!("proc_{}", pid),
+                            to: format!("host_{}", key),
+                            color: if is_suspicious { Color32::RED } else { Color32::from_rgb(100, 100, 100) },
+                            thickness: 1.5,
+                        });
+                    }
+                }
+
+                // Run layout on the locked data
+                let center = *center_pos.lock().unwrap();
+                let k = 200.0;
+                let damping = 0.85;
+                let max_displacement = 30.0;
+
+                let mut interface_positions: HashMap<String, Vec<String>> = HashMap::new();
+                for (id, node) in nodes_lock.iter() {
+                    interface_positions
+                        .entry(node.interface.clone().unwrap_or("Unknown".to_string()))
+                        .or_default()
+                        .push(id.clone());
+                }
+
+                let interface_count = interface_positions.len() as f32;
+                for (idx, (_interface, node_ids)) in interface_positions.iter().enumerate() {
+                    let angle = (idx as f32 / interface_count) * 2.0 * std::f32::consts::PI;
+                    let cluster_center = Pos2::new(
+                        center.x + angle.cos() * 250.0,
+                        center.y + angle.sin() * 250.0,
+                    );
+
+                    let node_count = node_ids.len() as f32;
+                    for (i, node_id) in node_ids.iter().enumerate() {
+                        if let Some(node) = nodes_lock.get_mut(node_id) {
+                            if node.pos == Pos2::ZERO {
+                                let angle = (i as f32 / node_count) * 2.0 * std::f32::consts::PI;
+                                let radius = if node.is_process { 80.0 } else { 120.0 };
+                                node.pos = Pos2::new(
+                                    cluster_center.x + angle.cos() * radius,
+                                    cluster_center.y + angle.sin() * radius,
+                                );
+                                node.target_pos = node.pos;
+                            }
+                        }
+                    }
+                }
+
+                for iteration in 0..20 {
+                    let temp_k = k * (1.0 - iteration as f32 / 20.0);
+
+                    let node_ids: Vec<String> = nodes_lock.keys().cloned().collect();
+                    for i in 0..node_ids.len() {
+                        for j in (i + 1)..node_ids.len() {
+                            let id1 = &node_ids[i];
+                            let id2 = &node_ids[j];
+
+                            if let (Some(n1), Some(n2)) = (nodes_lock.get(id1), nodes_lock.get(id2)) {
+                                let diff = n2.pos - n1.pos;
+                                let dist = diff.length().max(1.0);
+
+                                if dist > 500.0 { continue; }
+
+                                let force = temp_k * temp_k / dist;
+                                let dir = diff / dist;
+                                let displacement = (force * 0.015 * damping).min(max_displacement);
+
+                                if let Some(n1_mut) = nodes_lock.get_mut(id1) {
+                                    n1_mut.pos -= dir * displacement;
+                                }
+                                if let Some(n2_mut) = nodes_lock.get_mut(id2) {
+                                    n2_mut.pos += dir * displacement;
+                                }
+                            }
+                        }
+                    }
+
+                    for edge in edges_lock.iter() {
+                        if let (Some(n1), Some(n2)) = (nodes_lock.get(&edge.from), nodes_lock.get(&edge.to)) {
+                            let diff = n2.pos - n1.pos;
+                            let dist = diff.length().max(1.0);
+                            let force = dist * dist / temp_k;
+                            let dir = diff / dist;
+                            let displacement = (force * 0.015 * damping).min(max_displacement);
+
+                            if let Some(n1_mut) = nodes_lock.get_mut(&edge.from) {
+                                n1_mut.pos += dir * displacement;
+                            }
+                            if let Some(n2_mut) = nodes_lock.get_mut(&edge.to) {
+                                n2_mut.pos -= dir * displacement;
+                            }
+                        }
+                    }
+
+                    for (_, node) in nodes_lock.iter_mut() {
+                        let to_center = center - node.pos;
+                        let dist = to_center.length();
+                        if dist > 400.0 {
+                            node.pos += to_center * 0.015;
+                        }
+                    }
+                }
+
+                for (_, node) in nodes_lock.iter_mut() {
+                    let diff = node.target_pos - node.pos;
+                    if diff.length() > 1.0 {
+                        node.pos += diff * 0.1;
+                    } else {
+                        node.pos = node.target_pos;
+                    }
+                }
+
+                *layout_dirty.lock().unwrap() = false;
     }
-    
-    pub fn select_node(&self, node_id: &str) {
+
+            pub fn select_node(&self, node_id: &str) {
         *self.selected_node.lock().unwrap() = Some(node_id.to_string());
     }
     
