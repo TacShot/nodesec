@@ -264,6 +264,23 @@ impl Default for ScanSettings {
     }
 }
 
+
+/// Audit scan state for persistence
+#[derive(Debug, Clone, Default)]
+pub struct AuditState {
+    pub is_scanning: bool,
+    pub scan_complete: bool,
+    pub compliance_cis: bool,
+    pub compliance_nist: bool,
+    pub compliance_pci_dss: bool,
+    pub enable_nvd: bool,
+    pub last_scan_time: Option<String>,
+    pub findings_count: usize,
+    pub suspicious_count: usize,
+    pub critical_count: usize,
+    pub audit_results: String,
+}
+
 pub struct MonitorState {
     pub connections: Arc<Mutex<Vec<ConnectionItem>>>,
     pub alerts: Arc<Mutex<Vec<String>>>,
@@ -275,6 +292,8 @@ pub struct MonitorState {
     pub action_log: Arc<Mutex<VecDeque<ActionLogEntry>>>,
     pub scan_settings: Arc<Mutex<ScanSettings>>,
     pub threat_detector: Arc<Mutex<ThreatDetector>>,
+    pub audit_state: Arc<Mutex<AuditState>>,
+    pub connected_devices: Arc<Mutex<Vec<nodesec_core::models::ConnectedDevice>>>,
 }
 
 impl MonitorState {
@@ -290,6 +309,8 @@ impl MonitorState {
             action_log: Arc::new(Mutex::new(VecDeque::with_capacity(1000))),
             scan_settings: Arc::new(Mutex::new(ScanSettings::default())),
             threat_detector: Arc::new(Mutex::new(ThreatDetector::new())),
+            audit_state: Arc::new(Mutex::new(AuditState::default())),
+            connected_devices: Arc::new(Mutex::new(Vec::new())),
         }
     }
     

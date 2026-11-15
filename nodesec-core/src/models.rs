@@ -384,3 +384,29 @@ pub struct ThreatAlert {
     pub message: String,
     pub connection: Option<NetworkConnection>,
 }
+
+// Connected device tracking (USB, Bluetooth, Thunderbolt, etc.)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceType {
+    Usb,
+    Bluetooth,
+    Thunderbolt,
+    FireWire,
+    SdCard,
+    Other(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectedDevice {
+    pub id: String,
+    pub name: String,
+    pub device_type: DeviceType,
+    pub vendor: Option<String>,
+    pub product_id: Option<String>,
+    pub vendor_id: Option<String>,
+    pub serial_number: Option<String>,
+    pub connected_at: u64,
+    pub last_seen: u64,
+    pub is_connected: bool,
+}

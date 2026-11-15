@@ -12,6 +12,7 @@ mod ui;
 mod graph;
 
 use crate::state::FilterSettings;
+use nodesec_core::models::{ConnectedDevice, DeviceType};
 use crate::graph::ConnectionGraph;
 
 // Colors matching 7-color palette
@@ -36,6 +37,7 @@ enum Tab {
     Statistics,
     Audit,
     Reports,
+    Devices,
     Settings,
 }
 
@@ -50,6 +52,7 @@ impl Tab {
             Tab::Statistics => "Statistics",
             Tab::Audit => "Audit",
             Tab::Reports => "Reports",
+            Tab::Devices => "Devices",
             Tab::Settings => "Settings",
         }
     }
@@ -483,15 +486,15 @@ impl App {
             return;
         }
 
-        // Group by process
+        // Group by process - show ALL connections including unknown PIDs
         use std::collections::HashMap;
         let mut process_map: HashMap<String, Vec<&crate::state::ConnectionItem>> = HashMap::new();
         for item in &connections {
-            // Only show processes with real PIDs (root required for lsof)
-            if item.connection.pid == 0 && item.connection.process_name == "unknown" {
-                continue;
-            }
-            let key = format!("{}:{}", item.connection.pid, item.connection.process_name);
+            let key = if item.connection.pid == 0 && item.connection.process_name == "unknown" {
+                format!("unknown:{}", item.connection.src_port)
+            } else {
+                format!("{}:{}", item.connection.pid, item.connection.process_name)
+            };
             process_map.entry(key).or_default().push(item);
         }
 
@@ -622,11 +625,9 @@ impl App {
                     egui::Sense::click(),
                 );
                 if response.clicked() {
-                    if pid > 0 {
-                        self.selected_process = Some(pid);
-                        self.details_selected_pid = Some(pid);
-                        self.details_selected_tab = Tab::ProcessTree;
-                    }
+                    self.selected_process = Some(pid);
+                    self.details_selected_pid = Some(pid);
+                    self.details_selected_tab = Tab::ProcessTree;
                 }
             }
         });
@@ -842,6 +843,60 @@ impl App {
         }
     }
 
+    fn render_devices(&mut self, ui: &mut egui::Ui) {
+        ui.heading(egui::RichText::new("Connected Devices").color(ORANGE));
+        ui.separator();
+
+        ui.label(egui::RichText::new("USB, Bluetooth, and other connected devices").color(GRAY).size(11.0));
+        ui.separator();
+
+        // Enumerate devices
+        let devices = self.monitor_state.connected_devices.lock().unwrap().clone();
+
+        if devices.is_empty() {
+            ui.label(egui::RichText::new("No devices detected.").color(GRAY));
+            ui.label(egui::RichText::new("Note: Device enumeration requires root privileges on macOS.").color(GRAY).size(10.0));
+        } else {
+            ui.label(egui::RichText::new(format!("{} device(s) found", devices.len())).color(WHITE));
+            ui.separator();
+
+            for device in devices {
+                let type_color = match device.device_type {
+                    DeviceType::Usb => ORANGE,
+                    DeviceType::Bluetooth => GREEN,
+                    DeviceType::Thunderbolt => YELLOW,
+                    _ => GRAY,
+                };
+
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(type_color, egui::RichText::new(format!("{:?}", device.device_type)).strong());
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new(&device.name).strong());
+                    });
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(format!("ID: {}", device.id)).color(GRAY).size(10.0));
+                    ui.add_space(8.0);
+                    if let Some(vendor) = &device.vendor {
+                        ui.label(egui::RichText::new(format!("Vendor: {}", vendor)).color(GRAY).size(10.0));
+                    }
+                    ui.add_space(8.0);
+                    if let Some(pid) = &device.product_id {
+                        ui.label(egui::RichText::new(format!("PID: {}", pid)).color(GRAY).size(10.0));
+                    }
+                    ui.add_space(8.0);
+                    let status_color = if device.is_connected { GREEN } else { RED };
+                    ui.colored_label(status_color, if device.is_connected { "Connected" } else { "Disconnected" });
+                });
+                ui.separator();
+            }
+        }
+
+        ui.separator();
+        if ui.button("Refresh Device List").clicked() {
+            // TODO: trigger device re-enumeration
+        }
+    }
     fn render_alerts(&mut self, ui: &mut egui::Ui) {
         let alerts = self.monitor_state.alerts.lock().unwrap();
         crate::ui::render_alerts(ui, &alerts);
@@ -1013,46 +1068,107 @@ impl App {
         ui.label(egui::RichText::new("Static security auditing with CVE enrichment").color(GRAY).size(11.0));
         ui.separator();
 
+        let mut audit_state = self.monitor_state.audit_state.lock().unwrap();
+
         ui.group(|ui| {
             ui.heading(egui::RichText::new("Audit Configuration").color(ORANGE));
             ui.separator();
 
-            ui.horizontal(|ui| {
-                if ui.button("Run Full Audit").clicked() {
-                    // TODO: run audit
-                }
-                ui.add_space(8.0);
-                if ui.button("Scan Applications").clicked() {
-                    // TODO: scan apps
-                }
-                ui.add_space(8.0);
-                if ui.button("Scan AD Security").clicked() {
-                    // TODO: scan AD
-                }
-            });
+            // Scan buttons with running state
+            let scan_btn_text = if audit_state.is_scanning {
+                "[ Scanning... ]"
+            } else {
+                "[ Run Full Audit ]"
+            };
 
-            ui.separator();
-            ui.label(egui::RichText::new("Compliance Standards:").color(ORANGE).strong());
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut false, "CIS");
-                ui.add_space(8.0);
-                ui.checkbox(&mut false, "NIST");
-                ui.add_space(8.0);
-                ui.checkbox(&mut false, "PCI-DSS");
-            });
+            if ui.button(scan_btn_text).clicked() && !audit_state.is_scanning {
+                audit_state.is_scanning = true;
+                audit_state.scan_complete = false;
+                audit_state.audit_results = "Scan in progress...".to_string();
+                // TODO: trigger actual audit scan
+            }
+            ui.add_space(8.0);
 
-            ui.separator();
-            ui.label(egui::RichText::new("NVD CVE Enrichment:").color(ORANGE).strong());
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut false, "Enable NVD lookups");
-                ui.add_space(8.0);
-                ui.label("(requires internet access)");
-            });
+            if ui.button("[ Scan Applications ]").clicked() {
+                // TODO
+            }
+            ui.add_space(8.0);
+            if ui.button("[ Scan AD Security ]").clicked() {
+                // TODO
+            }
         });
 
         ui.separator();
-        ui.label(egui::RichText::new("Last Audit Results:").color(ORANGE).strong());
-        ui.label(egui::RichText::new("No audit has been run yet.").color(GRAY));
+        ui.label(egui::RichText::new("Compliance Standards:").color(ORANGE).strong());
+        ui.horizontal(|ui| {
+            let cis_checked = audit_state.compliance_cis;
+            if ui.checkbox(&mut audit_state.compliance_cis, "CIS").changed() {
+                // State persisted in audit_state
+            }
+            ui.add_space(8.0);
+            let nist_checked = audit_state.compliance_nist;
+            if ui.checkbox(&mut audit_state.compliance_nist, "NIST").changed() {
+                // State persisted
+            }
+            ui.add_space(8.0);
+            let pci_checked = audit_state.compliance_pci_dss;
+            if ui.checkbox(&mut audit_state.compliance_pci_dss, "PCI-DSS").changed() {
+                // State persisted
+            }
+        });
+
+        ui.separator();
+        ui.label(egui::RichText::new("NVD CVE Enrichment:").color(ORANGE).strong());
+        ui.horizontal(|ui| {
+            let nvd_checked = audit_state.enable_nvd;
+            if ui.checkbox(&mut audit_state.enable_nvd, "Enable NVD lookups").changed() {
+                // State persisted
+            }
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("(requires internet access)").color(GRAY).size(10.0));
+        });
+
+        // Scan status indicator
+        if audit_state.is_scanning {
+            ui.separator();
+            ui.group(|ui| {
+                ui.heading(egui::RichText::new("Scan Status: RUNNING").color(ORANGE));
+                ui.label("Security audit in progress... This may take several minutes.");
+                ui.add_space(4.0);
+                // Simple animated loading indicator
+                let t = Instant::now().elapsed().as_secs_f32();
+                let phase = (t * 5.0).sin() * 0.5 + 0.5;
+                ui.painter().rect_filled(
+                    egui::Rect::from_center_size(egui::pos2(100.0, ui.cursor().top() + 10.0), egui::vec2(40.0, 8.0)),
+                    4.0,
+                    egui::Color32::from_rgb(0, 200 * phase as u8, 255 * (1.0 - phase) as u8),
+                );
+            });
+        }
+
+        if audit_state.scan_complete && !audit_state.is_scanning {
+            ui.separator();
+            ui.group(|ui| {
+                ui.heading(egui::RichText::new("Scan Complete").color(GREEN));
+                ui.label(format!("Last scan: {}", audit_state.last_scan_time.as_deref().unwrap_or("unknown")));
+                ui.horizontal(|ui| {
+                    ui.label(format!("Findings: {}", audit_state.findings_count));
+                    ui.add_space(16.0);
+                    ui.colored_label(RED, format!("Suspicious: {}", audit_state.suspicious_count));
+                    ui.add_space(16.0);
+                    ui.colored_label(RED, format!("Critical: {}", audit_state.critical_count));
+                });
+                ui.separator();
+                ui.label(egui::RichText::new(&audit_state.audit_results).color(WHITE).size(11.0));
+            });
+        }
+
+        if !audit_state.is_scanning && !audit_state.scan_complete {
+            ui.separator();
+            ui.label(egui::RichText::new("Last Audit Results: No audit has been run yet.").color(GRAY));
+        }
+
+        drop(audit_state);
     }
 
     fn render_reports(&mut self, ui: &mut egui::Ui) {
@@ -1100,32 +1216,44 @@ impl App {
         let stats = self.monitor_state.stats.lock().unwrap();
         let connections = self.monitor_state.connections.lock().unwrap();
 
+        // Top stat cards row
         ui.horizontal(|ui| {
             crate::ui::stat_card(ui, "Total Scanned", &stats.total.to_string(), WHITE);
             crate::ui::stat_card(ui, "Active Now", &connections.len().to_string(), GREEN);
+            crate::ui::stat_card(ui, "Suspicious", &stats.suspicious.to_string(), RED);
+            crate::ui::stat_card(ui, "Critical", &stats.critical.to_string(), RED);
         });
 
         ui.separator();
 
-        // Top suspicious
-        let suspicious: Vec<_> = connections.iter()
-            .filter(|c| c.connection.is_suspicious)
-            .take(5)
-            .collect();
+        // Monitoring status
+        let monitoring = *self.monitor_state.monitoring.lock().unwrap();
+        let status_text = if monitoring { "LIVE MONITORING" } else { "MONITORING STOPPED" };
+        let status_color = if monitoring { GREEN } else { YELLOW };
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Status: ").color(GRAY).strong());
+            ui.colored_label(status_color, egui::RichText::new(status_text).strong());
+        });
 
-        if !suspicious.is_empty() {
-            ui.label(egui::RichText::new("Top Suspicious:").color(RED).strong());
-            for item in suspicious {
+        ui.separator();
+
+        // Recent activity
+        ui.label(egui::RichText::new("Recent Activity:").color(ORANGE).strong());
+        if connections.is_empty() {
+            ui.label(egui::RichText::new("No connections captured yet.").color(GRAY));
+        } else {
+            let recent: Vec<_> = connections.iter().rev().take(5).collect();
+            for item in recent {
                 let conn = &item.connection;
+                let threat_color = item.threat_level.color();
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(&conn.process_name).size(11.0));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.colored_label(item.threat_level.color(), item.threat_level.label());
-                    });
+                    ui.label(egui::RichText::new(format!("{}:{} → {}:{}", conn.src_ip, conn.src_port, conn.dst_ip, conn.dst_port)).size(10.0));
+                    ui.add_space(16.0);
+                    ui.label(egui::RichText::new(&conn.process_name).size(10.0));
+                    ui.add_space(16.0);
+                    ui.colored_label(threat_color, item.threat_level.label());
                 });
             }
-        } else {
-            ui.label(egui::RichText::new("No suspicious activity").color(GREEN));
         }
 
         ui.separator();
@@ -1138,14 +1266,16 @@ impl App {
             *type_counts.entry(proto).or_insert(0) += 1;
         }
 
-        ui.label(egui::RichText::new("By Protocol:").color(ORANGE).strong());
-        for (proto, count) in type_counts {
-            ui.horizontal(|ui| {
-                ui.label(proto);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(count.to_string());
+        if !type_counts.is_empty() {
+            ui.label(egui::RichText::new("By Protocol:").color(ORANGE).strong());
+            for (proto, count) in type_counts {
+                ui.horizontal(|ui| {
+                    ui.label(proto);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(count.to_string());
+                    });
                 });
-            });
+            }
         }
     }
 
@@ -1299,7 +1429,7 @@ impl eframe::App for App {
                 for tab in [
                     Tab::Dashboard, Tab::Connections, Tab::ProcessTree,
                     Tab::ConnectionGraph, Tab::Alerts, Tab::Statistics,
-                    Tab::Audit, Tab::Reports, Tab::Settings
+                    Tab::Audit, Tab::Reports, Tab::Devices, Tab::Settings
                 ] {
                     let selected = self.selected_tab == tab;
                     if ui.selectable_label(selected, tab.label()).clicked() {
@@ -1348,6 +1478,7 @@ impl eframe::App for App {
                 Tab::Statistics => self.render_statistics(ui),
                 Tab::Audit => self.render_audit(ui),
                 Tab::Reports => self.render_reports(ui),
+                Tab::Devices => self.render_devices(ui),
                 Tab::Settings => self.render_settings(ui),
             }
         });
