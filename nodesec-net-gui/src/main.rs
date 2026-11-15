@@ -256,11 +256,12 @@ impl App {
 
         ui.separator();
 
+        let terminated = self.monitor_state.terminated_pids.lock().unwrap().clone();
         // Clone connections to avoid borrow issues
         let mut connections: Vec<crate::state::ConnectionItem> = self.monitor_state.connections.lock().unwrap().clone();
 
-        // Apply filter
-        connections.retain(|item| self.filter.matches(item));
+        // Apply filter and exclude terminated PIDs
+        connections.retain(|item| self.filter.matches(item) && !terminated.contains(&item.connection.pid));
 
         // Sort (with cooldown to prevent rapid reordering from short-lived connections)
         let sort_elapsed = self.last_conn_sort.elapsed();
@@ -307,8 +308,15 @@ impl App {
                 if self.conn_sort_field == SortField::Time {
                     ui.label(egui::RichText::new(format!("Time {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
                 } else if ui.small_button("Time").clicked() {
-                    self.conn_sort_field = SortField::Time;
-                    self.conn_sort_dir = SortDir::Asc;
+                    if self.conn_sort_field == SortField::Time {
+                        self.conn_sort_dir = match self.conn_sort_dir {
+                            SortDir::Asc => SortDir::Desc,
+                            SortDir::Desc => SortDir::Asc,
+                        };
+                    } else {
+                        self.conn_sort_field = SortField::Time;
+                        self.conn_sort_dir = SortDir::Asc;
+                    }
                 }
                 ui.add_space(8.0);
 
@@ -316,8 +324,15 @@ impl App {
                 if self.conn_sort_field == SortField::Pid {
                     ui.label(egui::RichText::new(format!("PID {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
                 } else if ui.small_button("PID").clicked() {
-                    self.conn_sort_field = SortField::Pid;
-                    self.conn_sort_dir = SortDir::Asc;
+                    if self.conn_sort_field == SortField::Pid {
+                        self.conn_sort_dir = match self.conn_sort_dir {
+                            SortDir::Asc => SortDir::Desc,
+                            SortDir::Desc => SortDir::Asc,
+                        };
+                    } else {
+                        self.conn_sort_field = SortField::Pid;
+                        self.conn_sort_dir = SortDir::Asc;
+                    }
                 }
                 ui.add_space(16.0);
 
@@ -325,8 +340,15 @@ impl App {
                 if self.conn_sort_field == SortField::Process {
                     ui.label(egui::RichText::new(format!("Process {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
                 } else if ui.small_button("Process").clicked() {
-                    self.conn_sort_field = SortField::Process;
-                    self.conn_sort_dir = SortDir::Asc;
+                    if self.conn_sort_field == SortField::Process {
+                        self.conn_sort_dir = match self.conn_sort_dir {
+                            SortDir::Asc => SortDir::Desc,
+                            SortDir::Desc => SortDir::Asc,
+                        };
+                    } else {
+                        self.conn_sort_field = SortField::Process;
+                        self.conn_sort_dir = SortDir::Asc;
+                    }
                 }
                 ui.add_space(16.0);
 
@@ -334,8 +356,15 @@ impl App {
                 if self.conn_sort_field == SortField::Proto {
                     ui.label(egui::RichText::new(format!("Proto {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
                 } else if ui.small_button("Proto").clicked() {
-                    self.conn_sort_field = SortField::Proto;
-                    self.conn_sort_dir = SortDir::Asc;
+                    if self.conn_sort_field == SortField::Proto {
+                        self.conn_sort_dir = match self.conn_sort_dir {
+                            SortDir::Asc => SortDir::Desc,
+                            SortDir::Desc => SortDir::Asc,
+                        };
+                    } else {
+                        self.conn_sort_field = SortField::Proto;
+                        self.conn_sort_dir = SortDir::Asc;
+                    }
                 }
                 ui.add_space(16.0);
 
@@ -343,8 +372,15 @@ impl App {
                 if self.conn_sort_field == SortField::Source {
                     ui.label(egui::RichText::new(format!("Source {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
                 } else if ui.small_button("Source").clicked() {
-                    self.conn_sort_field = SortField::Source;
-                    self.conn_sort_dir = SortDir::Asc;
+                    if self.conn_sort_field == SortField::Source {
+                        self.conn_sort_dir = match self.conn_sort_dir {
+                            SortDir::Asc => SortDir::Desc,
+                            SortDir::Desc => SortDir::Asc,
+                        };
+                    } else {
+                        self.conn_sort_field = SortField::Source;
+                        self.conn_sort_dir = SortDir::Asc;
+                    }
                 }
                 ui.add_space(16.0);
 
@@ -352,8 +388,15 @@ impl App {
                 if self.conn_sort_field == SortField::Destination {
                     ui.label(egui::RichText::new(format!("Destination {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
                 } else if ui.small_button("Destination").clicked() {
-                    self.conn_sort_field = SortField::Destination;
-                    self.conn_sort_dir = SortDir::Asc;
+                    if self.conn_sort_field == SortField::Destination {
+                        self.conn_sort_dir = match self.conn_sort_dir {
+                            SortDir::Asc => SortDir::Desc,
+                            SortDir::Desc => SortDir::Asc,
+                        };
+                    } else {
+                        self.conn_sort_field = SortField::Destination;
+                        self.conn_sort_dir = SortDir::Asc;
+                    }
                 }
                 ui.add_space(16.0);
 
@@ -361,8 +404,15 @@ impl App {
                 if self.conn_sort_field == SortField::Score {
                     ui.label(egui::RichText::new(format!("Score {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
                 } else if ui.small_button("Score").clicked() {
-                    self.conn_sort_field = SortField::Score;
-                    self.conn_sort_dir = SortDir::Asc;
+                    if self.conn_sort_field == SortField::Score {
+                        self.conn_sort_dir = match self.conn_sort_dir {
+                            SortDir::Asc => SortDir::Desc,
+                            SortDir::Desc => SortDir::Asc,
+                        };
+                    } else {
+                        self.conn_sort_field = SortField::Score;
+                        self.conn_sort_dir = SortDir::Asc;
+                    }
                 }
                 ui.add_space(8.0);
 
@@ -440,21 +490,6 @@ impl App {
             }
         });
 
-        // Detail panel for selected connection (top-to-bottom layout below table)
-        if let Some(ref conn_id) = self.selected_connection_id {
-            // Find the connection by ID
-            let found_conn = connections.iter().find(|item| {
-                let c = &item.connection;
-                format!("{}:{}->{}:{}", c.src_ip, c.src_port, c.dst_ip, c.dst_port) == *conn_id
-            });
-            if let Some(item) = found_conn {
-                ui.separator();
-                crate::ui::render_connection_detail_topdown(ui, item, &self.monitor_state);
-            } else {
-                self.selected_connection_id = None;
-                self.details_selected_conn = None;
-            }
-        }
     }
 
     fn render_process_tree(&mut self, ui: &mut egui::Ui) {
@@ -477,15 +512,79 @@ impl App {
         }
 
         ui.label(egui::RichText::new("Processes • Click cell for details").color(GRAY).size(11.0));
+
+        // Sort toggle buttons
+        ui.horizontal(|ui| {
+            ui.colored_label(GRAY, "Sort by:");
+            ui.add_space(4.0);
+
+            let proc_sort_icon = match self.proc_sort_dir {
+                SortDir::Asc => "▲",
+                SortDir::Desc => "▼",
+            };
+
+            if ui.button(format!("Threat {}", proc_sort_icon)).clicked() {
+                if self.proc_sort_field == SortField::Score {
+                    self.proc_sort_dir = match self.proc_sort_dir {
+                        SortDir::Asc => SortDir::Desc,
+                        SortDir::Desc => SortDir::Asc,
+                    };
+                } else {
+                    self.proc_sort_field = SortField::Score;
+                    self.proc_sort_dir = SortDir::Desc;
+                }
+            }
+            ui.add_space(4.0);
+
+            if ui.button(format!("Name {}", proc_sort_icon)).clicked() {
+                if self.proc_sort_field == SortField::Process {
+                    self.proc_sort_dir = match self.proc_sort_dir {
+                        SortDir::Asc => SortDir::Desc,
+                        SortDir::Desc => SortDir::Asc,
+                    };
+                } else {
+                    self.proc_sort_field = SortField::Process;
+                    self.proc_sort_dir = SortDir::Asc;
+                }
+            }
+            ui.add_space(4.0);
+
+            if ui.button(format!("PID {}", proc_sort_icon)).clicked() {
+                if self.proc_sort_field == SortField::Pid {
+                    self.proc_sort_dir = match self.proc_sort_dir {
+                        SortDir::Asc => SortDir::Desc,
+                        SortDir::Desc => SortDir::Asc,
+                    };
+                } else {
+                    self.proc_sort_field = SortField::Pid;
+                    self.proc_sort_dir = SortDir::Asc;
+                }
+            }
+            ui.add_space(4.0);
+
+            if ui.button(format!("Conns {}", proc_sort_icon)).clicked() {
+                if self.proc_sort_field == SortField::Connections {
+                    self.proc_sort_dir = match self.proc_sort_dir {
+                        SortDir::Asc => SortDir::Desc,
+                        SortDir::Desc => SortDir::Asc,
+                    };
+                } else {
+                    self.proc_sort_field = SortField::Connections;
+                    self.proc_sort_dir = SortDir::Desc;
+                }
+            }
+        });
+
         ui.separator();
 
+        let terminated = self.monitor_state.terminated_pids.lock().unwrap().clone();
         let connections: Vec<crate::state::ConnectionItem> = self
             .monitor_state
             .connections
             .lock()
             .unwrap()
             .iter()
-            .filter(|item| self.filter.matches(item))
+            .filter(|item| self.filter.matches(item) && !terminated.contains(&item.connection.pid))
             .cloned()
             .collect();
 
@@ -516,10 +615,26 @@ impl App {
             })
             .collect();
 
-        // Sort by threat score descending (with cooldown)
+        // Sort processes (with cooldown to prevent rapid reordering)
         let sort_elapsed = self.last_proc_sort.elapsed();
-        if sort_elapsed.as_secs_f32() > 2.0 {
-            processes.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+        if sort_elapsed.as_secs_f32() > 0.5 {
+            processes.sort_by(|a, b| {
+                let ordering = match self.proc_sort_field {
+                    SortField::Score => a.2.cmp(&b.2),
+                    SortField::Process => a.0.cmp(&b.0),
+                    SortField::Pid => {
+                        let pa: u32 = a.0.split(':').next().unwrap_or(&"0").parse().unwrap_or(0);
+                        let pb: u32 = b.0.split(':').next().unwrap_or(&"0").parse().unwrap_or(0);
+                        pa.cmp(&pb)
+                    }
+                    SortField::Connections => a.1.len().cmp(&b.1.len()),
+                    _ => std::cmp::Ordering::Equal,
+                };
+                match self.proc_sort_dir {
+                    SortDir::Asc => ordering,
+                    SortDir::Desc => ordering.reverse(),
+                }
+            });
             self.last_proc_sort = Instant::now();
         }
 
@@ -683,13 +798,14 @@ impl App {
         ui.label(egui::RichText::new("Cells = processes • Lines = shared connections • Right-drag to pan • Click cell for details").color(GRAY).size(11.0));
         ui.separator();
 
+        let terminated = self.monitor_state.terminated_pids.lock().unwrap().clone();
         let connections: Vec<crate::state::ConnectionItem> = self
             .monitor_state
             .connections
             .lock()
             .unwrap()
             .iter()
-            .filter(|item| self.filter.matches(item))
+            .filter(|item| self.filter.matches(item) && !terminated.contains(&item.connection.pid))
             .cloned()
             .collect();
 

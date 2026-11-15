@@ -327,6 +327,7 @@ pub struct MonitorState {
     pub exclusion_list: Arc<Mutex<nodesec_core::models::ExclusionList>>,
     pub crypto_miner_rulebook: Arc<Mutex<nodesec_core::models::CryptoMinerRulebook>>,
     pub root_status: Arc<Mutex<RootStatus>>,
+    pub terminated_pids: Arc<Mutex<std::collections::HashSet<u32>>>,
 }
 
 /// Root privilege status
@@ -362,6 +363,7 @@ impl MonitorState {
             exclusion_list: Arc::new(Mutex::new(nodesec_core::models::ExclusionList::default())),
             crypto_miner_rulebook: Arc::new(Mutex::new(nodesec_core::models::CryptoMinerRulebook::new())),
             root_status: Arc::new(Mutex::new(RootStatus::default())),
+            terminated_pids: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
     

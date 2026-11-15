@@ -169,6 +169,10 @@ pub fn terminate_process(pid: u32, process_name: &str, monitor_state: &crate::st
             success,
             details: if success { "Process terminated".to_string() } else { "Failed to terminate".to_string() },
         });
+        // Add to terminated_pids so cells disappear from process tree
+        if success {
+            monitor_state.terminated_pids.lock().unwrap().insert(pid);
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
