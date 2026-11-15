@@ -815,6 +815,7 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                     let icon = if proc.is_suspicious { "⚠ " } else { "✓ " };
                     let label_text = format!("{}{}", icon, process_display);
 
+                    // Use ui.add() with SelectableLabel for click detection
                     let response = ui.add(egui::widgets::SelectableLabel::new(is_selected, label_text));
                     if response.clicked() {
                         *selected_process = Some(proc.pid);
@@ -829,89 +830,6 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                     ui.colored_label(threat_color, proc.total_threat_score.to_string());
                     ui.colored_label(threat_color, if proc.is_suspicious { "SUSPICIOUS" } else { "OK" });
                     ui.end_row();
-
-                    // Context menu for process row (shown on right-click)
-                    response.context_menu(|ui| {
-                        ui.heading(format!("{} (PID: {})", process_display, proc.pid));
-                        ui.separator();
-
-                        if let Some(path) = &proc.path {
-                            ui.label(format!("Path: {}", path));
-                            ui.separator();
-                        }
-
-                        if ui.button("Terminate").clicked() {
-                            crate::ui::terminate_process(proc.pid, &process_display, monitor_state);
-                            ui.close_menu();
-                        }
-                        if ui.button("Block All Ports").clicked() {
-                            ui.close_menu();
-                        }
-                        if ui.button("Copy PID").clicked() {
-                            ui.output_mut(|o| o.copied_text = proc.pid.to_string());
-                            ui.close_menu();
-                        }
-                        if ui.button("Copy Name").clicked() {
-                            ui.output_mut(|o| o.copied_text = process_display.clone());
-                            ui.close_menu();
-                        }
-                        if let Some(path) = &proc.path {
-                            if ui.button("Copy Path").clicked() {
-                                ui.output_mut(|o| o.copied_text = path.clone());
-                                ui.close_menu();
-                            }
-                        }
-
-                        ui.separator();
-                        if ui.button("Show Connections").clicked() {
-                            *selected_process = Some(proc.pid);
-                            ui.close_menu();
-                        }
-                    });
-
-                    // Show connection details inline for selected process
-                    if is_selected {
-                        ui.add_space(4.0);
-                        if let Some(path) = &proc.path {
-                            ui.label(egui::RichText::new(format!("Path: {}", path)).color(GRAY).size(11.0));
-                        }
-                        if let Some(user) = &proc.user {
-                            ui.label(egui::RichText::new(format!("User: {}", user)).color(GRAY).size(11.0));
-                        }
-                        ui.separator();
-                        ui.label(egui::RichText::new("Network Connections:").color(WHITE).strong().size(11.0));
-
-                        egui::Grid::new(format!("proc_conns_{}", proc.pid))
-                            .striped(true)
-                            .min_col_width(80.0)
-                            .show(ui, |ui| {
-                                ui.label(egui::RichText::new("Protocol").color(ORANGE).strong().size(11.0));
-                                ui.label(egui::RichText::new("Source").color(ORANGE).strong().size(11.0));
-                                ui.label(egui::RichText::new("Destination").color(ORANGE).strong().size(11.0));
-                                ui.label(egui::RichText::new("Threat").color(ORANGE).strong().size(11.0));
-                                ui.end_row();
-
-                                for conn in &proc.connections {
-                                    let proto = format!("{:?}", conn.protocol);
-                                    let src = format!("{}:{}", conn.src_ip, conn.src_port);
-                                    let dst = format!("{}:{}", conn.dst_ip, conn.dst_port);
-                                    let conn_threat_color = match conn.threat_score {
-                                        0..=25 => GREEN,
-                                        26..=49 => YELLOW,
-                                        50..=74 => ORANGE,
-                                        75..=89 => egui::Color32::from_rgb(255, 100, 100),
-                                        _ => RED,
-                                    };
-
-                                    ui.label(egui::RichText::new(proto).size(11.0));
-                                    ui.label(egui::RichText::new(src).size(11.0));
-                                    ui.label(egui::RichText::new(dst).size(11.0));
-                                    ui.colored_label(conn_threat_color, egui::RichText::new(conn.threat_score.to_string()).size(11.0));
-                                    ui.end_row();
-                                }
-                            });
-                        ui.add_space(8.0);
-                    }
                 }
             });
     });
