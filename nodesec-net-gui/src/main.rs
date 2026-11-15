@@ -584,7 +584,7 @@ impl App {
                 let pid: u32 = key.split(':').next().unwrap_or(&"0").parse().unwrap_or(0);
                 let is_selected = self.selected_process == Some(pid);
 
-                // Cell frame
+                // Cell frame using painter (avoids clipping)
                 ui.painter().rect_filled(
                     cell_rect,
                     6.0,
@@ -596,43 +596,53 @@ impl App {
                     egui::Stroke::new(2.0, if is_selected { WHITE } else { threat_color }),
                 );
 
-                // Cell content
-                let old_clip = ui.clip_rect();
-                ui.set_clip_rect(cell_rect.shrink(8.0));
-                ui.vertical(|ui| {
-                    ui.add_space(2.0);
-                    let display_name = if key.starts_with("unknown") {
-                        format!("Unknown (port {})", key.split(':').nth(1).unwrap_or(&"0"))
-                    } else {
-                        key.split(':').nth(1).unwrap_or(&key).to_string()
-                    };
-                    ui.label(egui::RichText::new(&display_name).color(WHITE).size(11.0).strong());
-                    ui.add_space(1.0);
-                    ui.label(egui::RichText::new(format!("PID: {}", pid)).color(GRAY).size(9.0));
-                    ui.add_space(1.0);
-                    ui.label(egui::RichText::new(format!("{} connections", conns.len())).color(ORANGE).size(9.0));
-                    ui.add_space(1.0);
-                    ui.colored_label(threat_color, egui::RichText::new(format!("Threat: {}", threat_score)).size(9.0));
+                // Cell content using painter text (avoids clip rect issues)
+                let center_x_cell = cell_rect.center().x;
+                let top_y = cell_rect.top() + 10.0;
 
-                    // Show subtree: individual connections under this process
-                    ui.separator();
-                    ui.label(egui::RichText::new("Destinations:").color(GRAY).size(8.0));
-                    for conn in conns.iter().take(5) {
-                        let c = &conn.connection;
-                        ui.label(egui::RichText::new(format!("  {}:{} → {}:{} ({})", 
-                            c.src_ip, c.src_port, c.dst_ip, c.dst_port,
-                            format!("{:?}", c.protocol))).color(WHITE).size(8.0));
-                    }
-                    if conns.len() > 5 {
-                        ui.label(egui::RichText::new(format!("  ... and {} more", conns.len() - 5)).color(GRAY).size(8.0));
-                    }
-                });
-                ui.set_clip_rect(old_clip);
+                let display_name = if key.starts_with("unknown") {
+                    format!("Unknown (port {})", key.split(':').nth(1).unwrap_or(&"0"))
+                } else {
+                    key.split(':').nth(1).unwrap_or(&key).to_string()
+                };
 
-                // Clickable overlay
+                // Name
+                ui.painter().text(
+                    egui::pos2(center_x_cell, top_y),
+                    egui::Align2::CENTER_CENTER,
+                    &display_name,
+                    egui::FontId::new(11.0, egui::FontFamily::Proportional),
+                    WHITE,
+                );
+                // PID
+                ui.painter().text(
+                    egui::pos2(center_x_cell, top_y + 18.0),
+                    egui::Align2::CENTER_CENTER,
+                    &format!("PID: {}", pid),
+                    egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                    GRAY,
+                );
+                // Connections count
+                ui.painter().text(
+                    egui::pos2(center_x_cell, top_y + 34.0),
+                    egui::Align2::CENTER_CENTER,
+                    &format!("{} connections", conns.len()),
+                    egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                    ORANGE,
+                );
+                // Threat score
+                ui.painter().text(
+                    egui::pos2(center_x_cell, top_y + 50.0),
+                    egui::Align2::CENTER_CENTER,
+                    &format!("Threat: {}", threat_score),
+                    egui::FontId::new(9.0, egui::FontFamily::Proportional),
+                    threat_color,
+                );
+
+                // Clickable overlay for the cell (left-click selects)
                 let response = ui.interact(
                     cell_rect,
-                    ui.id().with(format!("proc_btn_{}", i)),
+                    ui.id().with(format!("proc_cell_{}", i)),
                     egui::Sense::click(),
                 );
                 if response.clicked() {
@@ -737,17 +747,16 @@ impl App {
 
         let available = ui.available_rect_before_wrap();
 
-        // Handle pan input
+        // Handle pan input - only pan when RIGHT mouse button is held down
         let mut offset = self.graph_offset;
 
-        // Drag to pan (left button drag)
-        if ui.input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
-            // Track drag via delta
-        }
-        let drag_delta = ui.input(|i| i.pointer.delta());
-        if drag_delta.length_sq() > 0.0 {
-            offset += drag_delta;
-            self.graph_offset = offset;
+        // Drag to pan: only when RIGHT mouse button is held
+        if ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary)) {
+            let drag_delta = ui.input(|i| i.pointer.delta());
+            if drag_delta.length_sq() > 0.0 {
+                offset += drag_delta;
+                self.graph_offset = offset;
+            }
         }
 
         // Draw cells using painter (avoids clipping issues with ui.label)
