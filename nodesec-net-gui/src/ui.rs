@@ -81,8 +81,8 @@ pub fn render_connections_table(
     
     ui.separator();
     
-    // Connections table with horizontal scrolling
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    // Connections table with horizontal scrolling - use Grid for compatibility
+    egui::ScrollArea::both().show(ui, |ui| {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
         egui::Grid::new("connections_table")
             .striped(true)
@@ -117,14 +117,14 @@ pub fn render_connections_table(
 
                     let is_selected = *selected_connection == Some(i);
 
-                    // Use selectable_label for full row selection
+                    // Use SelectableLabel widget for full row selection
                     let display_name = if conn.process_name.is_empty() {
                         "unknown".to_string()
                     } else {
                         conn.process_name.clone()
                     };
 
-                    let response = ui.selectable_label(is_selected, display_name);
+                    let response = ui.add(egui::widgets::SelectableLabel::new(is_selected, display_name));
                     if response.clicked() {
                         *selected_connection = Some(i);
                     }
@@ -806,7 +806,7 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
 
                     let is_selected = selected_process.as_ref() == Some(&proc.pid);
 
-                    // Use selectable_label for the entire row click area
+                    // Use SelectableLabel widget for full row click area
                     let process_display = if proc.name.is_empty() {
                         "unknown".to_string()
                     } else {
@@ -815,7 +815,7 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                     let icon = if proc.is_suspicious { "⚠ " } else { "✓ " };
                     let label_text = format!("{}{}", icon, process_display);
 
-                    let response = ui.selectable_label(is_selected, label_text);
+                    let response = ui.add(egui::widgets::SelectableLabel::new(is_selected, label_text));
                     if response.clicked() {
                         *selected_process = Some(proc.pid);
                     }
@@ -830,7 +830,7 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                     ui.colored_label(threat_color, if proc.is_suspicious { "SUSPICIOUS" } else { "OK" });
                     ui.end_row();
 
-                    // Context menu for process row
+                    // Context menu for process row (shown on right-click)
                     response.context_menu(|ui| {
                         ui.heading(format!("{} (PID: {})", process_display, proc.pid));
                         ui.separator();
@@ -840,7 +840,7 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                             ui.separator();
                         }
 
-                        if ui.button("Terminate Process").clicked() {
+                        if ui.button("Terminate").clicked() {
                             crate::ui::terminate_process(proc.pid, &process_display, monitor_state);
                             ui.close_menu();
                         }
@@ -851,7 +851,7 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                             ui.output_mut(|o| o.copied_text = proc.pid.to_string());
                             ui.close_menu();
                         }
-                        if ui.button("Copy Process Name").clicked() {
+                        if ui.button("Copy Name").clicked() {
                             ui.output_mut(|o| o.copied_text = process_display.clone());
                             ui.close_menu();
                         }
