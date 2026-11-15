@@ -114,6 +114,12 @@ struct App {
     conn_sort_dir: SortDir,
     proc_sort_field: SortField,
     proc_sort_dir: SortDir,
+    // Sort cooldown to prevent rapid reordering from short-lived connections
+    last_conn_sort: Instant,
+    last_proc_sort: Instant,
+    // Graph pan/zoom state
+    graph_offset: egui::Vec2,
+    graph_zoom: f32,
 }
 
 impl App {
@@ -140,6 +146,10 @@ impl App {
             conn_sort_dir: SortDir::Desc,
             proc_sort_field: SortField::Process,
             proc_sort_dir: SortDir::Asc,
+            last_conn_sort: Instant::now(),
+            last_proc_sort: Instant::now(),
+            graph_offset: egui::Vec2::ZERO,
+            graph_zoom: 1.0,
         }
     }
 
@@ -242,29 +252,33 @@ impl App {
         // Apply filter
         connections.retain(|item| self.filter.matches(item));
 
-        // Sort
-        connections.sort_by(|a, b| {
-            let ordering = match self.conn_sort_field {
-                SortField::Process => a.connection.process_name.cmp(&b.connection.process_name),
-                SortField::Pid => a.connection.pid.cmp(&b.connection.pid),
-                SortField::Time => {
-                    let ta = chrono::DateTime::from_timestamp(a.connection.timestamp as i64, 0).unwrap_or_default();
-                    let tb = chrono::DateTime::from_timestamp(b.connection.timestamp as i64, 0).unwrap_or_default();
-                    ta.cmp(&tb)
+        // Sort (with cooldown to prevent rapid reordering from short-lived connections)
+        let sort_elapsed = self.last_conn_sort.elapsed();
+        if sort_elapsed.as_secs_f32() > 2.0 {
+            connections.sort_by(|a, b| {
+                let ordering = match self.conn_sort_field {
+                    SortField::Process => a.connection.process_name.cmp(&b.connection.process_name),
+                    SortField::Pid => a.connection.pid.cmp(&b.connection.pid),
+                    SortField::Time => {
+                        let ta = chrono::DateTime::from_timestamp(a.connection.timestamp as i64, 0).unwrap_or_default();
+                        let tb = chrono::DateTime::from_timestamp(b.connection.timestamp as i64, 0).unwrap_or_default();
+                        ta.cmp(&tb)
+                    }
+                    SortField::Proto => format!("{:?}", a.connection.protocol).cmp(&format!("{:?}", b.connection.protocol)),
+                    SortField::Source => format!("{}:{}", a.connection.src_ip, a.connection.src_port).cmp(
+                        &format!("{}:{}", b.connection.src_ip, b.connection.src_port)),
+                    SortField::Destination => format!("{}:{}", a.connection.dst_ip, a.connection.dst_port).cmp(
+                        &format!("{}:{}", b.connection.dst_ip, b.connection.dst_port)),
+                    SortField::Score => a.connection.threat_score.cmp(&b.connection.threat_score),
+                    _ => std::cmp::Ordering::Equal,
+                };
+                match self.conn_sort_dir {
+                    SortDir::Asc => ordering,
+                    SortDir::Desc => ordering.reverse(),
                 }
-                SortField::Proto => format!("{:?}", a.connection.protocol).cmp(&format!("{:?}", b.connection.protocol)),
-                SortField::Source => format!("{}:{}", a.connection.src_ip, a.connection.src_port).cmp(
-                    &format!("{}:{}", b.connection.src_ip, b.connection.src_port)),
-                SortField::Destination => format!("{}:{}", a.connection.dst_ip, a.connection.dst_port).cmp(
-                    &format!("{}:{}", b.connection.dst_ip, b.connection.dst_port)),
-                SortField::Score => a.connection.threat_score.cmp(&b.connection.threat_score),
-                _ => std::cmp::Ordering::Equal,
-            };
-            match self.conn_sort_dir {
-                SortDir::Asc => ordering,
-                SortDir::Desc => ordering.reverse(),
-            }
-        });
+            });
+            self.last_conn_sort = Instant::now();
+        }
 
         egui::ScrollArea::both().show(ui, |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
@@ -485,8 +499,12 @@ impl App {
             })
             .collect();
 
-        // Sort by threat score descending
-        processes.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+        // Sort by threat score descending (with cooldown to prevent rapid reordering)
+        let sort_elapsed = self.last_proc_sort.elapsed();
+        if sort_elapsed.as_secs_f32() > 2.0 {
+            processes.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+            self.last_proc_sort = Instant::now();
+        }
 
         let available = ui.available_rect_before_wrap();
         let hub_y = available.bottom() - 60.0;
@@ -544,9 +562,9 @@ impl App {
             WHITE,
         );
 
-        // Draw process cells in a horizontal scrollable row
+        // Draw process cells in a horizontal scrollable row with subtree connections below
         egui::ScrollArea::horizontal().show(ui, |ui| {
-            ui.set_min_size(egui::vec2(total_width + cell_spacing * 2.0, available.height() - 80.0));
+            ui.set_min_size(egui::vec2(total_width + cell_spacing * 2.0, 300.0));
 
             for (i, (key, conns, threat_score)) in processes.iter().enumerate() {
                 let cell_x = start_x + i as f32 * (cell_width + cell_spacing);
@@ -595,6 +613,19 @@ impl App {
                     ui.label(egui::RichText::new(format!("{} connections", conns.len())).color(ORANGE).size(9.0));
                     ui.add_space(1.0);
                     ui.colored_label(threat_color, egui::RichText::new(format!("Threat: {}", threat_score)).size(9.0));
+
+                    // Show subtree: individual connections under this process
+                    ui.separator();
+                    ui.label(egui::RichText::new("Destinations:").color(GRAY).size(8.0));
+                    for conn in conns.iter().take(5) {
+                        let c = &conn.connection;
+                        ui.label(egui::RichText::new(format!("  {}:{} → {}:{} ({})", 
+                            c.src_ip, c.src_port, c.dst_ip, c.dst_port,
+                            format!("{:?}", c.protocol))).color(WHITE).size(8.0));
+                    }
+                    if conns.len() > 5 {
+                        ui.label(egui::RichText::new(format!("  ... and {} more", conns.len() - 5)).color(GRAY).size(8.0));
+                    }
                 });
                 ui.set_clip_rect(old_clip);
 
@@ -642,12 +673,11 @@ impl App {
     }
 
     fn render_connection_graph(&mut self, ui: &mut egui::Ui) {
-        // Cell-based graph: rounded rectangles (cells) connected by lines
-        // Top-down layout with ample space between cells (like image 3/4 style)
+        // Cell-based graph: rounded rectangles connected by lines with pan/zoom
         ui.heading(egui::RichText::new("Connection Graph (Cell View)").color(ORANGE));
         ui.separator();
 
-        ui.label(egui::RichText::new("Cells = processes • Lines = shared connections • Click cell for details").color(GRAY).size(11.0));
+        ui.label(egui::RichText::new("Cells = processes • Lines = shared connections • Drag to pan • Scroll to zoom • Click cell for details").color(GRAY).size(11.0));
         ui.separator();
 
         let connections: Vec<crate::state::ConnectionItem> = self
@@ -699,87 +729,126 @@ impl App {
             .cmp(&a.1.iter().map(|c| c.connection.threat_score).max().unwrap_or(0))
             .then_with(|| a.0.cmp(&b.0)));
 
-        // Layout: vertical column of cells with ample spacing (like image 3/4)
+        // Layout parameters
         let cell_width = 300.0;
         let cell_height = 110.0;
         let cell_spacing = 25.0;
-
         let total_height = cells.len() as f32 * (cell_height + cell_spacing) + cell_spacing;
 
         let available = ui.available_rect_before_wrap();
 
-        egui::ScrollArea::both().show(ui, |ui| {
-            ui.set_min_size(egui::vec2(available.width(), total_height));
+        // Handle pan input
+        let mut offset = self.graph_offset;
 
-            let mut y = cell_spacing;
-            let center_x = available.min.x + available.width() / 2.0 - cell_width / 2.0;
+        // Drag to pan (left button drag)
+        if ui.input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
+            // Track drag via delta
+        }
+        let drag_delta = ui.input(|i| i.pointer.delta());
+        if drag_delta.length_sq() > 0.0 {
+            offset += drag_delta;
+            self.graph_offset = offset;
+        }
 
-            for (i, (key, conns, cell_color)) in cells.iter().enumerate() {
-                let cell_rect = egui::Rect::from_min_size(
-                    egui::pos2(center_x, y),
-                    egui::vec2(cell_width, cell_height),
+        // Draw cells using painter (avoids clipping issues with ui.label)
+        let mut cell_rects: Vec<(egui::Rect, usize)> = Vec::new();
+
+        let mut y = cell_spacing;
+        let center_x = available.min.x + available.width() / 2.0 - cell_width / 2.0 + offset.x;
+        let y_offset = available.top() + offset.y;
+
+        for (i, (key, conns, cell_color)) in cells.iter().enumerate() {
+            let cell_rect = egui::Rect::from_min_size(
+                egui::pos2(center_x, y_offset + y),
+                egui::vec2(cell_width, cell_height),
+            );
+
+            // Draw connecting line from previous cell to this cell
+            if i > 0 {
+                let prev_bottom = egui::pos2(center_x + cell_width / 2.0, y_offset + y - cell_spacing / 2.0);
+                let this_top = egui::pos2(center_x + cell_width / 2.0, y_offset + y);
+                ui.painter().line_segment(
+                    [prev_bottom, this_top],
+                    egui::Stroke::new(2.0, GRAY),
                 );
-
-                // Draw connecting line from previous cell to this cell
-                if i > 0 {
-                    let prev_bottom = egui::pos2(center_x + cell_width / 2.0, y - cell_spacing / 2.0);
-                    let this_top = egui::pos2(center_x + cell_width / 2.0, y);
-                    ui.painter().line_segment(
-                        [prev_bottom, this_top],
-                        egui::Stroke::new(2.0, GRAY),
-                    );
-                }
-
-                // Cell frame
-                let is_selected = self.details_selected_node == Some(format!("cell_{}", i));
-                let stroke_color = if is_selected { WHITE } else { *cell_color };
-
-                ui.painter().rect_filled(
-                    cell_rect,
-                    8.0,
-                    egui::Color32::from_rgb(40, 40, 40),
-                );
-                ui.painter().rect_stroke(
-                    cell_rect,
-                    8.0,
-                    egui::Stroke::new(2.0, stroke_color),
-                );
-
-                // Cell content - use scope with clip rect instead of child_ui
-                let old_clip = ui.clip_rect();
-                ui.set_clip_rect(cell_rect.shrink(10.0));
-                ui.vertical_centered(|ui| {
-                    // Process name (truncated)
-                    let display_name = if key.starts_with("unknown") {
-                        format!("Unknown (port {})", key.split(':').nth(1).unwrap_or(&"0"))
-                    } else {
-                        key.split(':').nth(1).unwrap_or(&key).to_string()
-                    };
-                    ui.label(egui::RichText::new(&display_name).color(WHITE).size(13.0).strong());
-                    ui.add_space(2.0);
-                    ui.label(egui::RichText::new(format!("PID: {}", key.split(':').next().unwrap_or(&"0"))).color(GRAY).size(10.0));
-                    ui.add_space(2.0);
-                    ui.label(egui::RichText::new(format!("Connections: {}", conns.len())).color(ORANGE).size(11.0));
-                    ui.add_space(2.0);
-                    ui.colored_label(*cell_color, egui::RichText::new(format!("Max Threat: {}", conns.iter().map(|c| c.connection.threat_score).max().unwrap_or(0))).size(10.0));
-                });
-                ui.set_clip_rect(old_clip);
-
-                // Clickable button overlay for the cell
-                let response = ui.interact(
-                    cell_rect,
-                    ui.id().with(format!("cell_btn_{}", i)),
-                    egui::Sense::click(),
-                );
-                if response.clicked() {
-                    self.details_selected_node = Some(format!("cell_{}", i));
-                    self.details_selected_tab = Tab::ConnectionGraph;
-                    self.details_selected_index = Some(0);
-                }
-
-                y += cell_height + cell_spacing;
             }
-        });
+
+            // Cell frame
+            let is_selected = self.details_selected_node == Some(format!("cell_{}", i));
+            let stroke_color = if is_selected { WHITE } else { *cell_color };
+
+            ui.painter().rect_filled(
+                cell_rect,
+                8.0,
+                egui::Color32::from_rgb(40, 40, 40),
+            );
+            ui.painter().rect_stroke(
+                cell_rect,
+                8.0,
+                egui::Stroke::new(2.0, stroke_color),
+            );
+
+            // Draw text using painter (no clipping issues)
+            let display_name = if key.starts_with("unknown") {
+                format!("Unknown (port {})", key.split(':').nth(1).unwrap_or(&"0"))
+            } else {
+                key.split(':').nth(1).unwrap_or(&key).to_string()
+            };
+
+            // Name
+            ui.painter().text(
+                egui::pos2(center_x + cell_width / 2.0, y_offset + y + 16.0),
+                egui::Align2::CENTER_CENTER,
+                &display_name,
+                egui::FontId::new(13.0, egui::FontFamily::Proportional),
+                WHITE,
+            );
+            // PID
+            ui.painter().text(
+                egui::pos2(center_x + cell_width / 2.0, y_offset + y + 34.0),
+                egui::Align2::CENTER_CENTER,
+                &format!("PID: {}", key.split(':').next().unwrap_or(&"0")),
+                egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                GRAY,
+            );
+            // Connections count
+            ui.painter().text(
+                egui::pos2(center_x + cell_width / 2.0, y_offset + y + 50.0),
+                egui::Align2::CENTER_CENTER,
+                &format!("Connections: {}", conns.len()),
+                egui::FontId::new(11.0, egui::FontFamily::Proportional),
+                ORANGE,
+            );
+            // Max threat
+            ui.painter().text(
+                egui::pos2(center_x + cell_width / 2.0, y_offset + y + 66.0),
+                egui::Align2::CENTER_CENTER,
+                &format!("Max Threat: {}", conns.iter().map(|c| c.connection.threat_score).max().unwrap_or(0)),
+                egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                *cell_color,
+            );
+
+            cell_rects.push((cell_rect, i));
+
+            y += cell_height + cell_spacing;
+        }
+
+        // Clickable overlays for each cell
+        for (i, (cell_rect, _)) in cell_rects.iter().enumerate() {
+            let response = ui.interact(
+                *cell_rect,
+                ui.id().with(format!("cell_btn_{}", i)),
+                egui::Sense::click(),
+            );
+            if response.clicked() {
+                self.details_selected_node = Some(format!("cell_{}", i));
+                self.details_selected_tab = Tab::ConnectionGraph;
+                self.details_selected_index = Some(0);
+            }
+        }
+
+        // Set minimum scrollable size
+        ui.set_min_size(egui::vec2(available.width(), total_height));
 
         // Details panel for selected cell (bottom section)
         if let Some(idx) = self.details_selected_index {
@@ -1254,6 +1323,10 @@ pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
             conn_sort_dir: SortDir::Desc,
             proc_sort_field: SortField::Process,
             proc_sort_dir: SortDir::Asc,
+            last_conn_sort: Instant::now(),
+            last_proc_sort: Instant::now(),
+            graph_offset: egui::Vec2::ZERO,
+            graph_zoom: 1.0,
         };
 
         eframe::run_native(
