@@ -616,6 +616,64 @@ pub fn render_settings(
             }
         });
         
+        // Suggestions based on running processes with high threat scores
+        {
+            let connections = monitor_state.connections.lock().unwrap();
+            // Get unique processes with high threat scores
+            let mut suspicious_procs: std::collections::HashMap<String, (u32, u8, usize)> = std::collections::HashMap::new();
+            for item in connections.iter() {
+                let conn = &item.connection;
+                if conn.threat_score >= 50 {
+                    let key = format!("{}:{}", conn.process_name, conn.pid);
+                    let entry = suspicious_procs.entry(key.clone()).or_insert((conn.pid, conn.threat_score, 0));
+                    entry.2 += 1;
+                }
+            }
+            
+            if !suspicious_procs.is_empty() {
+                ui.group(|ui| {
+                    ui.heading(egui::RichText::new("Suggested Ignore Rules").color(ORANGE));
+                    ui.label(egui::RichText::new("Click to add high-threat processes to ignore list:").color(GRAY).size(10.0));
+                    ui.separator();
+                    
+                    let mut suggestions: Vec<_> = suspicious_procs.into_iter().collect();
+                    suggestions.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
+                    
+                    for (key, (pid, threat_score, conn_count)) in suggestions.into_iter().take(10) {
+                        let parts: Vec<&str> = key.splitn(2, ':').collect();
+                        let proc_name = parts.first().unwrap_or(&"unknown");
+                        
+                        let threat_color = match threat_score {
+                            0..=25 => GREEN,
+                            26..=49 => YELLOW,
+                            50..=74 => ORANGE,
+                            75..=89 => egui::Color32::from_rgb(255, 100, 100),
+                            _ => RED,
+                        };
+                        
+                        ui.horizontal(|ui| {
+                            ui.colored_label(threat_color, egui::RichText::new(format!("{} (PID: {}, Threat: {}, Conns: {})", proc_name, pid, threat_score, conn_count)).size(11.0));
+                            ui.add_space(8.0);
+                            if ui.button("Ignore").clicked() {
+                                settings.ignore_rules.push(crate::state::IgnoreRule {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    process_name: Some(proc_name.to_string()),
+                                    process_path: None,
+                                    pid: Some(pid),
+                                    port: None,
+                                    ip: None,
+                                    protocol: None,
+                                    created: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                                    description: format!("Ignore process: {} (PID: {})", proc_name, pid),
+                                });
+                            }
+                        });
+                    }
+                });
+                ui.separator();
+            }
+        }
+
         // Display ignore rules
         let mut to_remove = Vec::new();
         for (i, rule) in settings.ignore_rules.iter_mut().enumerate() {

@@ -1,6 +1,7 @@
 use chrono;
 use eframe::egui;
 use std::sync::{Arc, Mutex};
+use std::env;
 use std::time::{Duration, Instant};
 use std::collections::VecDeque;
 use tokio::runtime;
@@ -124,14 +125,9 @@ struct App {
     conn_sort_dir: SortDir,
     proc_sort_field: SortField,
     proc_sort_dir: SortDir,
-    // Sort cooldown to prevent rapid reordering from short-lived connections
-    last_conn_sort: Instant,
-    last_proc_sort: Instant,
-    // Track last sorted field/dir for immediate sort on change
-    prev_conn_sort_field: SortField,
-    prev_conn_sort_dir: SortDir,
-    prev_proc_sort_field: SortField,
-    prev_proc_sort_dir: SortDir,
+    
+    // Sort state tracking
+    
     // Graph pan/zoom state
     graph_offset: egui::Vec2,
     graph_zoom: f32,
@@ -161,12 +157,8 @@ impl App {
             conn_sort_dir: SortDir::Desc,
             proc_sort_field: SortField::Process,
             proc_sort_dir: SortDir::Asc,
-            last_conn_sort: Instant::now(),
-            last_proc_sort: Instant::now(),
-            prev_conn_sort_field: SortField::Time,
-            prev_conn_sort_dir: SortDir::Desc,
-            prev_proc_sort_field: SortField::Process,
-            prev_proc_sort_dir: SortDir::Asc,
+    
+    
             graph_offset: egui::Vec2::ZERO,
             graph_zoom: 1.0,
         }
@@ -272,37 +264,29 @@ impl App {
         // Apply filter and exclude terminated PIDs
         connections.retain(|item| self.filter.matches(item) && !terminated.contains(&item.connection.pid));
 
-        // Sort immediately when sort field/dir changes, otherwise use cooldown
-        let sort_changed = self.prev_conn_sort_field != self.conn_sort_field
-            || self.prev_conn_sort_dir != self.conn_sort_dir;
-        let sort_elapsed = self.last_conn_sort.elapsed();
-        if sort_changed || sort_elapsed.as_secs_f32() > 2.0 {
-            connections.sort_by(|a, b| {
-                let ordering = match self.conn_sort_field {
-                    SortField::Process => a.connection.process_name.cmp(&b.connection.process_name),
-                    SortField::Pid => a.connection.pid.cmp(&b.connection.pid),
-                    SortField::Time => {
-                        let ta = chrono::DateTime::from_timestamp(a.connection.timestamp as i64, 0).unwrap_or_default();
-                        let tb = chrono::DateTime::from_timestamp(b.connection.timestamp as i64, 0).unwrap_or_default();
-                        ta.cmp(&tb)
-                    }
-                    SortField::Proto => format!("{:?}", a.connection.protocol).cmp(&format!("{:?}", b.connection.protocol)),
-                    SortField::Source => format!("{}:{}", a.connection.src_ip, a.connection.src_port).cmp(
-                        &format!("{}:{}", b.connection.src_ip, b.connection.src_port)),
-                    SortField::Destination => format!("{}:{}", a.connection.dst_ip, a.connection.dst_port).cmp(
-                        &format!("{}:{}", b.connection.dst_ip, b.connection.dst_port)),
-                    SortField::Score => a.connection.threat_score.cmp(&b.connection.threat_score),
-                    _ => std::cmp::Ordering::Equal,
-                };
-                match self.conn_sort_dir {
-                    SortDir::Asc => ordering,
-                    SortDir::Desc => ordering.reverse(),
+        // Always sort connections
+        connections.sort_by(|a, b| {
+            let ordering = match self.conn_sort_field {
+                SortField::Process => a.connection.process_name.cmp(&b.connection.process_name),
+                SortField::Pid => a.connection.pid.cmp(&b.connection.pid),
+                SortField::Time => {
+                    let ta = chrono::DateTime::from_timestamp(a.connection.timestamp as i64, 0).unwrap_or_default();
+                    let tb = chrono::DateTime::from_timestamp(b.connection.timestamp as i64, 0).unwrap_or_default();
+                    ta.cmp(&tb)
                 }
-            });
-            self.last_conn_sort = Instant::now();
-            self.prev_conn_sort_field = self.conn_sort_field;
-            self.prev_conn_sort_dir = self.conn_sort_dir;
-        }
+                SortField::Proto => format!("{:?}", a.connection.protocol).cmp(&format!("{:?}", b.connection.protocol)),
+                SortField::Source => format!("{}:{}", a.connection.src_ip, a.connection.src_port).cmp(
+                    &format!("{}:{}", b.connection.src_ip, b.connection.src_port)),
+                SortField::Destination => format!("{}:{}", a.connection.dst_ip, a.connection.dst_port).cmp(
+                    &format!("{}:{}", b.connection.dst_ip, b.connection.dst_port)),
+                SortField::Score => a.connection.threat_score.cmp(&b.connection.threat_score),
+                _ => std::cmp::Ordering::Equal,
+            };
+            match self.conn_sort_dir {
+                SortDir::Asc => ordering,
+                SortDir::Desc => ordering.reverse(),
+            }
+        });
 
         egui::ScrollArea::both().show(ui, |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
@@ -628,32 +612,24 @@ impl App {
             })
             .collect();
 
-        // Sort processes immediately on change, otherwise use cooldown
-        let proc_sort_changed = self.prev_proc_sort_field != self.proc_sort_field
-            || self.prev_proc_sort_dir != self.proc_sort_dir;
-        let sort_elapsed = self.last_proc_sort.elapsed();
-        if proc_sort_changed || sort_elapsed.as_secs_f32() > 0.5 {
-            processes.sort_by(|a, b| {
-                let ordering = match self.proc_sort_field {
-                    SortField::Score => a.2.cmp(&b.2),
-                    SortField::Process => a.0.cmp(&b.0),
-                    SortField::Pid => {
-                        let pa: u32 = a.0.split(':').next().unwrap_or(&"0").parse().unwrap_or(0);
-                        let pb: u32 = b.0.split(':').next().unwrap_or(&"0").parse().unwrap_or(0);
-                        pa.cmp(&pb)
-                    }
-                    SortField::Connections => a.1.len().cmp(&b.1.len()),
-                    _ => std::cmp::Ordering::Equal,
-                };
-                match self.proc_sort_dir {
-                    SortDir::Asc => ordering,
-                    SortDir::Desc => ordering.reverse(),
+        // Sort processes
+        processes.sort_by(|a, b| {
+            let ordering = match self.proc_sort_field {
+                SortField::Score => a.2.cmp(&b.2),
+                SortField::Process => a.0.cmp(&b.0),
+                SortField::Pid => {
+                    let pa: u32 = a.0.split(':').next().unwrap_or(&"0").parse().unwrap_or(0);
+                    let pb: u32 = b.0.split(':').next().unwrap_or(&"0").parse().unwrap_or(0);
+                    pa.cmp(&pb)
                 }
-            });
-            self.last_proc_sort = Instant::now();
-            self.prev_proc_sort_field = self.proc_sort_field;
-            self.prev_proc_sort_dir = self.proc_sort_dir;
-        }
+                SortField::Connections => a.1.len().cmp(&b.1.len()),
+                _ => std::cmp::Ordering::Equal,
+            };
+            match self.proc_sort_dir {
+                SortDir::Asc => ordering,
+                SortDir::Desc => ordering.reverse(),
+            }
+        });
 
         let available = ui.available_rect_before_wrap();
         let hub_y = available.bottom() - 60.0;
@@ -1851,12 +1827,8 @@ pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
             conn_sort_dir: SortDir::Desc,
             proc_sort_field: SortField::Process,
             proc_sort_dir: SortDir::Asc,
-            last_conn_sort: Instant::now(),
-            last_proc_sort: Instant::now(),
-            prev_conn_sort_field: SortField::Time,
-            prev_conn_sort_dir: SortDir::Desc,
-            prev_proc_sort_field: SortField::Process,
-            prev_proc_sort_dir: SortDir::Asc,
+    
+    
             graph_offset: egui::Vec2::ZERO,
             graph_zoom: 1.0,
         };
@@ -1919,11 +1891,6 @@ pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(target_os = "macos")]
-    {
-        ensure_root_privileges();
-    }
-
     run_net_gui()
 }
 
@@ -2030,55 +1997,61 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
         }
 
         // Fallback to ioreg if system_profiler returns empty
+        // ioreg outputs XML plist format; convert to JSON with plutil for parsing
         if devices.is_empty() {
-            if let Ok(output) = std::process::Command::new("ioreg").args(["-r", "-c", "IOUSBDevice", "-a"]).output() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let mut current_name = String::new();
-                let mut current_vendor_id: Option<String> = None;
-                let mut current_product_id: Option<String> = None;
-                let mut current_serial: Option<String> = None;
+            if let Ok(ioreg_output) = std::process::Command::new("ioreg")
+                .args(["-r", "-c", "IOUSBDevice", "-a"])
+                .output()
+            {
+                let temp_path = std::env::temp_dir().join("nodesec_ioreg.plist");
+                if std::fs::write(&temp_path, &ioreg_output.stdout).is_ok() {
+                    if let Ok(plutil_output) = std::process::Command::new("plutil")
+                        .args(["-convert", "json", "-o", "-", temp_path.to_str().unwrap_or("")])
+                        .output()
+                    {
+                        if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&plutil_output.stdout) {
+                            if let Some(items) = json.as_array() {
+                                for item in items {
+                                    let name = item.get("_name")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("Unknown USB Device")
+                                        .to_string();
+                                    let product_id = item.get("product_id")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+                                    let vendor_id = item.get("vendor_id")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+                                    let serial = item.get("serial_num")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
 
-                for line in stdout.lines() {
-                    let line = line.trim();
-                    if line.contains("\"USB Product Name\"") {
-                        if let Some(start) = line.find('=') {
-                            let val = line[start+1..].trim().trim_matches('"');
-                            if !val.is_empty() && val != "0" {
-                                current_name = val.to_string();
+                                    // ioreg may use different key names; try alternatives
+                                    let product_id = product_id.or_else(|| {
+                                        item.get("IDProduct").and_then(|v| v.as_str()).map(|s| s.to_string())
+                                    });
+                                    let vendor_id = vendor_id.or_else(|| {
+                                        item.get("IDVendor").and_then(|v| v.as_str()).map(|s| s.to_string())
+                                    });
+
+                                    devices.push(nodesec_core::models::ConnectedDevice {
+                                        id: format!("usb:{}:{}", vendor_id.as_deref().unwrap_or("unknown"), product_id.as_deref().unwrap_or("unknown")),
+                                        name,
+                                        device_type: nodesec_core::models::DeviceType::Usb,
+                                        vendor: None,
+                                        product_id,
+                                        vendor_id,
+                                        serial_number: serial,
+                                        connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                                        last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                                        is_connected: true,
+                                    });
+                                }
                             }
                         }
-                    } else if line.contains("\"idVendor\"") {
-                        if let Some(start) = line.find('=') {
-                            current_vendor_id = Some(line[start+1..].trim().trim_matches('"').to_string());
-                        }
-                    } else if line.contains("\"idProduct\"") {
-                        if let Some(start) = line.find('=') {
-                            current_product_id = Some(line[start+1..].trim().trim_matches('"').to_string());
-                        }
-                    } else if line.contains("\"USB Serial Number\"") {
-                        if let Some(start) = line.find('=') {
-                            current_serial = Some(line[start+1..].trim().trim_matches('"').to_string());
-                        }
-                    } else if line.contains("IOUSBDevice") && !current_name.is_empty() {
-                        if let (Some(vid), Some(pid)) = (&current_vendor_id, &current_product_id) {
-                            devices.push(nodesec_core::models::ConnectedDevice {
-                                id: format!("usb:{}:{}", vid, pid),
-                                name: current_name.clone(),
-                                device_type: nodesec_core::models::DeviceType::Usb,
-                                vendor: None,
-                                product_id: Some(pid.clone()),
-                                vendor_id: Some(vid.clone()),
-                                serial_number: current_serial.clone(),
-                                connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
-                                last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
-                                is_connected: true,
-                            });
-                        }
-                        current_name.clear();
-                        current_vendor_id = None;
-                        current_product_id = None;
-                        current_serial = None;
                     }
+                    // Clean up temp file
+                    let _ = std::fs::remove_file(&temp_path);
                 }
             }
         }
