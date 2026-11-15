@@ -143,56 +143,98 @@ pub fn render_connections_table(
     });
 }
 
-pub fn render_connection_detail(
+pub fn render_connection_detail_topdown(
     ui: &mut egui::Ui,
     item: &ConnectionItem,
     monitor_state: &crate::state::MonitorState,
 ) {
     let conn = &item.connection;
-    
+    let threat_color = item.threat_level.color();
+
     ui.group(|ui| {
         ui.heading(egui::RichText::new("Connection Details").color(ORANGE));
         ui.separator();
-        
-        egui::Grid::new("conn_detail").num_columns(2).show(ui, |ui| {
-            detail_row(ui, "PID", &conn.pid.to_string());
-            detail_row(ui, "Process", &conn.process_name);
-            detail_row(ui, "Path", conn.process_path.as_deref().unwrap_or("N/A"));
-            detail_row(ui, "Command", conn.command_line.as_deref().unwrap_or("N/A"));
-            detail_row(ui, "User", conn.user.as_deref().unwrap_or("N/A"));
-            detail_row(ui, "Protocol", &format!("{:?}", conn.protocol));
-            detail_row(ui, "Source", &format!("{}:{}", conn.src_ip, conn.src_port));
-            detail_row(ui, "Destination", &format!("{}:{}", conn.dst_ip, conn.dst_port));
-            detail_row(ui, "Threat Score", &conn.threat_score.to_string());
-            detail_row(ui, "Suspicious", &conn.is_suspicious.to_string());
-            detail_row(ui, "Timestamp", &chrono::DateTime::from_timestamp(conn.timestamp as i64, 0)
+
+        // Top-to-bottom detail layout per field
+        ui.label(egui::RichText::new("PID").color(GRAY).size(11.0).strong());
+        ui.label(egui::RichText::new(conn.pid.to_string()).color(WHITE).size(12.0));
+        ui.add_space(2.0);
+
+        ui.label(egui::RichText::new("Process").color(GRAY).size(11.0).strong());
+        ui.label(egui::RichText::new(&conn.process_name).color(WHITE).size(12.0));
+        ui.add_space(2.0);
+
+        ui.label(egui::RichText::new("Path").color(GRAY).size(11.0).strong());
+        ui.label(egui::RichText::new(conn.process_path.as_deref().unwrap_or("N/A")).color(WHITE).size(12.0));
+        ui.add_space(2.0);
+
+        ui.label(egui::RichText::new("Command").color(GRAY).size(11.0).strong());
+        ui.label(egui::RichText::new(conn.command_line.as_deref().unwrap_or("N/A")).color(WHITE).size(12.0));
+        ui.add_space(2.0);
+
+        ui.label(egui::RichText::new("User").color(GRAY).size(11.0).strong());
+        ui.label(egui::RichText::new(conn.user.as_deref().unwrap_or("N/A")).color(WHITE).size(12.0));
+        ui.add_space(2.0);
+
+        ui.label(egui::RichText::new("Protocol").color(GRAY).size(11.0).strong());
+        ui.label(egui::RichText::new(format!("{:?}", conn.protocol)).color(WHITE).size(12.0));
+        ui.add_space(2.0);
+
+        ui.label(egui::RichText::new("Source").color(GRAY).size(11.0).strong());
+        ui.label(egui::RichText::new(format!("{}:{}", conn.src_ip, conn.src_port)).color(WHITE).size(12.0));
+        ui.add_space(2.0);
+
+        ui.label(egui::RichText::new("Destination").color(GRAY).size(11.0).strong());
+        ui.label(egui::RichText::new(format!("{}:{}", conn.dst_ip, conn.dst_port)).color(WHITE).size(12.0));
+        ui.add_space(2.0);
+
+        ui.label(egui::RichText::new("Threat Score").color(GRAY).size(11.0).strong());
+        ui.colored_label(threat_color, egui::RichText::new(conn.threat_score.to_string()).size(12.0).strong());
+        ui.add_space(2.0);
+
+        ui.label(egui::RichText::new("Suspicious").color(GRAY).size(11.0).strong());
+        ui.colored_label(if conn.is_suspicious { RED } else { GREEN }, egui::RichText::new(conn.is_suspicious.to_string()).size(12.0));
+        ui.add_space(2.0);
+
+        ui.label(egui::RichText::new("Timestamp").color(GRAY).size(11.0).strong());
+        ui.label(egui::RichText::new(
+            chrono::DateTime::from_timestamp(conn.timestamp as i64, 0)
                 .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-                .unwrap_or_default());
-        });
-        
-        ui.separator();
-        ui.horizontal(|ui| {
-            // Firewall actions
-            if ui.button("🔴 Terminate Process").clicked() {
-                terminate_process(conn.pid, &conn.process_name, monitor_state);
-            }
-            
-            if ui.button("🚫 Block Port").clicked() {
-                block_port(conn.dst_port, conn.pid, &conn.process_name, monitor_state);
-            }
-            
-            if ui.button("🛡️ Allow Port").clicked() {
-                allow_port(conn.dst_port, conn.pid, &conn.process_name, monitor_state);
-            }
-            
-            if ui.button("🚫 Block IP").clicked() {
-                block_ip(&conn.dst_ip.to_string(), conn.pid, &conn.process_name, monitor_state);
-            }
-        });
+                .unwrap_or_default()
+        ).color(WHITE).size(12.0));
+    });
+
+    ui.separator();
+    ui.horizontal(|ui| {
+        // Firewall actions - plain text buttons
+        if ui.button("[Terminate Process]").clicked() {
+            terminate_process(conn.pid, &conn.process_name, monitor_state);
+        }
+
+        if ui.button("[Block Port]").clicked() {
+            block_port(conn.dst_port, conn.pid, &conn.process_name, monitor_state);
+        }
+
+        if ui.button("[Allow Port]").clicked() {
+            allow_port(conn.dst_port, conn.pid, &conn.process_name, monitor_state);
+        }
+
+        if ui.button("[Block IP]").clicked() {
+            block_ip(&conn.dst_ip.to_string(), conn.pid, &conn.process_name, monitor_state);
+        }
     });
 }
 
-fn detail_row(ui: &mut egui::Ui, label: &str, value: &str) {
+// Keep old render_connection_detail for backward compatibility but update to use plain text
+pub fn render_connection_detail(
+    ui: &mut egui::Ui,
+    item: &ConnectionItem,
+    monitor_state: &crate::state::MonitorState,
+) {
+    render_connection_detail_topdown(ui, item, monitor_state);
+}
+
+pub fn detail_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.label(egui::RichText::new(label).color(GRAY).size(12.0));
     ui.label(egui::RichText::new(value).color(WHITE).size(12.0));
 }
@@ -527,7 +569,7 @@ pub fn render_settings(
                         ui.label(format!("Protocol: {:?}", proto));
                     }
                     
-                    if ui.button("🗑 Remove").clicked() {
+                    if ui.button("[Remove]").clicked() {
                         to_remove.push(i);
                     }
                 });
@@ -579,8 +621,8 @@ pub fn render_settings(
                 ui.label(&entry.process_name);
                 ui.label(entry.pid.to_string());
                 ui.label(&entry.details);
-                ui.colored_label(if entry.success { GREEN } else { RED }, 
-                    if entry.success { "✓" } else { "✗" });
+                ui.colored_label(if entry.success { GREEN } else { RED },
+                    if entry.success { "[OK]" } else { "[FAIL]" });
                 ui.end_row();
             }
         });
@@ -812,8 +854,7 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
                     } else {
                         proc.name.clone()
                     };
-                    let icon = if proc.is_suspicious { "⚠ " } else { "✓ " };
-                    let label_text = format!("{}{}", icon, process_display);
+                    let label_text = format!("{}", process_display);
 
                     // Use ui.add() with SelectableLabel for click detection
                     let response = ui.add(egui::widgets::SelectableLabel::new(is_selected, label_text));
@@ -872,12 +913,12 @@ pub fn render_connection_graph(ui: &mut egui::Ui, graph: &mut crate::graph::Conn
             
             if node.is_process {
                 ui.horizontal(|ui| {
-                    if ui.button("🔴 Terminate").clicked() {
+                    if ui.button("[Terminate]").clicked() {
                         if let Some(pid) = node.pid {
                             crate::ui::terminate_process(pid, &node.process_name, monitor_state);
                         }
                     }
-                    if ui.button("🚫 Block All Ports").clicked() {
+                    if ui.button("[Block All Ports]").clicked() {
                         // Block all ports for this process
                     }
                 });

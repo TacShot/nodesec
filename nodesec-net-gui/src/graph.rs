@@ -799,14 +799,14 @@ impl ConnectionGraph {
                 
                 if node.is_process {
                     if let Some(pid) = node.pid {
-                        if ui.button("🔴 Terminate Process").clicked() {
+                        if ui.button("[Terminate Process]").clicked() {
                             crate::ui::terminate_process(pid, &node.process_name, &monitor_state);
                             ui.close_menu();
                         }
-                        if ui.button("🚫 Block All Ports").clicked() {
+                        if ui.button("[Block All Ports]").clicked() {
                             ui.close_menu();
                         }
-                        if ui.button("📋 Copy PID").clicked() {
+                        if ui.button("[Copy PID]").clicked() {
                             ui.output_mut(|o| o.copied_text = pid.to_string());
                             ui.close_menu();
                         }
@@ -817,13 +817,13 @@ impl ConnectionGraph {
                     }
                 } else {
                     if let Some(ip) = &node.remote_ip {
-                        if ui.button("🚫 Block IP").clicked() {
+                        if ui.button("[Block IP]").clicked() {
                             crate::ui::block_ip(ip, node.pid.unwrap_or(0), &node.label, &monitor_state);
                             ui.close_menu();
                         }
                     }
                     if let Some(port) = node.remote_port {
-                        if ui.button("🚫 Block Port").clicked() {
+                        if ui.button("[Block Port]").clicked() {
                             crate::ui::block_port(port, node.pid.unwrap_or(0), &node.label, &monitor_state);
                             ui.close_menu();
                         }
