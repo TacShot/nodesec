@@ -195,38 +195,43 @@ impl MacOSNetworkMonitor {
     }
 
     fn parse_lsof_name(&self, name: &str, pid: u32, process_name: &str, user: &str) -> Option<ProcessInfo> {
-        // lsof NAME formats:
-        // "tcp4->192.168.1.100:50789" (established, simple)
-        // "tcp4->192.168.1.100:50789->172.217.3.46:443" (established with remote)
-        // "tcp4@*:50789" (listening, wildcard local)
-        // "tcp4->[::1]:50789" (IPv6)
+        // Actual lsof -nP -i NAME formats on macOS:
+        // "TCP 192.168.29.231:53168->140.82.112.26:443 (ESTABLISHED)"
+        // "TCP [2405:201:4051:b040:c464:e0a3:4444:2261]:49722->[2606:4700:9641:d8b7:9a0c:631:ccf5:ac50]:443 (ESTABLISHED)"
+        // "UDP *:*"
+        // "TCP *:50789"
+        // "TCP6 [::1]:50789->[::1]:443"
 
-        let proto_end = name.find("->").or_else(|| name.find("@"))?;
-        let after_proto = &name[proto_end + if name[proto_end..].starts_with("->") { 2 } else { 1 }..];
+        // Strip protocol prefix (TCP, UDP, TCP6, UDP6, etc.) and whitespace
+        let name = name.trim_start();
+        let name = name.strip_prefix("TCP ").or_else(|| name.strip_prefix("UDP "))
+            .or_else(|| name.strip_prefix("TCP6 ")).or_else(|| name.strip_prefix("UDP6 "))
+            .unwrap_or(name);
 
-        // Check if there's a second -> (remote address in established connections)
-        let local_part = if let Some(second_arrow) = after_proto.find("->") {
-            &after_proto[..second_arrow]
+        // Find the local address:port — it's everything before "->" (remote separator)
+        // or the whole string if listening (no remote)
+        let local_part = if let Some(arrow_pos) = name.find("->") {
+            &name[..arrow_pos].trim_end()
         } else {
-            after_proto
+            name.trim_end()
         };
 
+        // Remove trailing state like "(ESTABLISHED)" if present
+        let local_part = local_part.split_whitespace().next().unwrap_or(local_part);
+
+        if local_part.is_empty() || local_part == "*" || local_part == "*:*" {
+            return None; // listening wildcard, skip
+        }
+
         // Parse "ip:port" or "[ipv6]:port" from local_part
-        // lsof on macOS uses ":" as IP:port separator (e.g., 192.168.1.100:50789)
-        let (port_str,) = if local_part.starts_with('[') {
+        let port_str = if local_part.starts_with('[') {
+            // IPv6: [addr]:port
             let end = local_part.find(']')?;
-            let port = &local_part[end + 2..]; // skip "]:"
-            (port,)
+            let after_bracket = &local_part[end + 1..];
+            after_bracket.strip_prefix(':').unwrap_or(after_bracket)
         } else {
-            // Try colon first (lsof standard), fall back to dot
-            if let Some(last_colon) = local_part.rfind(':') {
-                let port = &local_part[last_colon + 1..];
-                (port,)
-            } else {
-                let last_dot = local_part.rfind('.')?;
-                let port = &local_part[last_dot + 1..];
-                (port,)
-            }
+            // IPv4: ip:port — split on last colon
+            local_part.rsplitn(2, ':').next().unwrap_or(local_part)
         };
 
         let src_port: u16 = port_str.parse().ok()?;

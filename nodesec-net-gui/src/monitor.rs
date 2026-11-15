@@ -119,19 +119,17 @@ pub fn start_monitoring(
 
                 // Add alert if suspicious
                 if is_suspicious {
-                    let mut alts = alerts.lock().unwrap();
-                    alts.insert(0, format!(
-                        "[{}] {} -> {}:{} (PID: {}, Score: {})",
-                        chrono::Local::now().format("%H:%M:%S"),
-                        event.process_name,
-                        event.dst_ip,
-                        event.dst_port,
-                        event.pid,
-                        threat_score
-                    ));
-                    if alts.len() > 100 {
-                        alts.truncate(100);
-                    }
+                    let alert = crate::state::AlertEntry {
+                        timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+                        process_name: event.process_name.clone(),
+                        dst_ip: event.dst_ip.to_string(),
+                        dst_port: event.dst_port,
+                        pid: event.pid,
+                        threat_score,
+                        is_suspicious: true,
+                        dismissed: false,
+                    };
+                    monitor_state.add_alert(alert);
                 }
 
                 // Update stats
@@ -152,4 +150,82 @@ pub fn start_monitoring(
 
 pub fn stop_monitoring(monitoring: Arc<Mutex<bool>>) {
     *monitoring.lock().unwrap() = false;
+}
+
+/// Terminate a process by PID
+pub fn terminate_process(pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
+    #[cfg(target_os = "macos")]
+    {
+        let result = std::process::Command::new("kill").args(["-9", &pid.to_string()]).status();
+        let success = result.map(|s| s.success()).unwrap_or(false);
+        monitor_state.add_action_log(crate::state::ActionLogEntry {
+            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            action: crate::state::ActionType::Terminate,
+            pid,
+            process_name: process_name.to_string(),
+            port: None,
+            ip: None,
+            rule: format!("kill -9 {}", pid),
+            success,
+            details: if success { "Process terminated".to_string() } else { "Failed to terminate".to_string() },
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (pid, process_name, monitor_state);
+    }
+}
+
+/// Block connections to an IP address
+pub fn block_ip(ip: &str, pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
+    #[cfg(target_os = "macos")]
+    {
+        // Use pfctl to block the IP
+        let result = std::process::Command::new("pfctl")
+            .args(["-t", "blocklist", "-T", "add", ip])
+            .status();
+        let success = result.map(|s| s.success()).unwrap_or(false);
+        monitor_state.add_action_log(crate::state::ActionLogEntry {
+            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            action: crate::state::ActionType::BlockIP,
+            pid,
+            process_name: process_name.to_string(),
+            port: None,
+            ip: Some(ip.to_string()),
+            rule: format!("pfctl block {}", ip),
+            success,
+            details: if success { "IP blocked".to_string() } else { "Failed to block IP".to_string() },
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (ip, pid, process_name, monitor_state);
+    }
+}
+
+/// Block connections on a port
+pub fn block_port(port: u16, pid: u32, process_name: &str, monitor_state: &crate::state::MonitorState) {
+    #[cfg(target_os = "macos")]
+    {
+        // Use pfctl to block the port
+        let result = std::process::Command::new("pfctl")
+            .args(["-t", "blocklist", "-T", "add", &format!("port {}", port)])
+            .status();
+        let success = result.map(|s| s.success()).unwrap_or(false);
+        monitor_state.add_action_log(crate::state::ActionLogEntry {
+            timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            action: crate::state::ActionType::BlockPort,
+            pid,
+            process_name: process_name.to_string(),
+            port: Some(port),
+            ip: None,
+            rule: format!("pfctl block port {}", port),
+            success,
+            details: if success { "Port blocked".to_string() } else { "Failed to block port".to_string() },
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (port, pid, process_name, monitor_state);
+    }
 }

@@ -131,7 +131,7 @@ impl ConnectionGraph {
     pub fn update(&self, connections: &[crate::state::ConnectionItem]) {
         let conn_count = connections.len();
         let mut last_count = self.last_connection_count.lock().unwrap();
-        let count_changed = (conn_count as i32 - *last_count as i32).abs() > 3;
+        let count_changed = (conn_count as i32 - *last_count as i32).abs() > 0;
         *last_count = conn_count;
 
         if !count_changed && !*self.layout_dirty.lock().unwrap() {

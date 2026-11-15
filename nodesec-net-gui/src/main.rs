@@ -1,3 +1,4 @@
+use chrono;
 use eframe::egui;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -11,7 +12,7 @@ mod monitor;
 mod ui;
 mod graph;
 
-use crate::state::FilterSettings;
+use crate::state::{FilterSettings, RootStatus};
 use nodesec_core::models::{ConnectedDevice, DeviceType};
 use crate::graph::ConnectionGraph;
 
@@ -898,8 +899,7 @@ impl App {
         }
     }
     fn render_alerts(&mut self, ui: &mut egui::Ui) {
-        let alerts = self.monitor_state.alerts.lock().unwrap();
-        crate::ui::render_alerts(ui, &alerts);
+        crate::ui::render_alerts(ui, &*self.monitor_state);
     }
 
     fn render_statistics(&mut self, ui: &mut egui::Ui) {
@@ -1068,24 +1068,117 @@ impl App {
         ui.label(egui::RichText::new("Static security auditing with CVE enrichment").color(GRAY).size(11.0));
         ui.separator();
 
-        let mut audit_state = self.monitor_state.audit_state.lock().unwrap();
+        // Copy all needed values from audit_state (release lock before egui closures)
+        let (is_scanning, scan_complete, compliance_cis, compliance_nist, compliance_pci_dss, enable_nvd, audit_results, findings_count, suspicious_count, critical_count) = {
+            let state = self.monitor_state.audit_state.lock().unwrap();
+            (
+                state.is_scanning,
+                state.scan_complete,
+                state.compliance_cis,
+                state.compliance_nist,
+                state.compliance_pci_dss,
+                state.enable_nvd,
+                state.audit_results.clone(),
+                state.findings_count,
+                state.suspicious_count,
+                state.critical_count,
+            )
+        };
+
+        // Scan buttons with running state
+        let scan_btn_text = if is_scanning {
+            "[ Scanning... ]"
+        } else {
+            "[ Run Full Audit ]"
+        };
 
         ui.group(|ui| {
             ui.heading(egui::RichText::new("Audit Configuration").color(ORANGE));
             ui.separator();
 
-            // Scan buttons with running state
-            let scan_btn_text = if audit_state.is_scanning {
-                "[ Scanning... ]"
-            } else {
-                "[ Run Full Audit ]"
-            };
+            if ui.button(scan_btn_text).clicked() && !is_scanning {
+                // Re-lock to mutate
+                let mut state = self.monitor_state.audit_state.lock().unwrap();
+                state.is_scanning = true;
+                state.scan_complete = false;
+                state.audit_results = "Scan in progress...".to_string();
+                state.findings_count = 0;
+                state.suspicious_count = 0;
+                state.critical_count = 0;
 
-            if ui.button(scan_btn_text).clicked() && !audit_state.is_scanning {
-                audit_state.is_scanning = true;
-                audit_state.scan_complete = false;
-                audit_state.audit_results = "Scan in progress...".to_string();
-                // TODO: trigger actual audit scan
+                // Capture settings before releasing lock
+                let compliance_cis = state.compliance_cis;
+                let compliance_nist = state.compliance_nist;
+                let compliance_pci_dss = state.compliance_pci_dss;
+                let enable_nvd = state.enable_nvd;
+                drop(state);
+
+                // Trigger actual audit scan using the audit engine
+                let monitor_state_clone = self.monitor_state.clone();
+
+                tokio::task::spawn_blocking(move || {
+                    use nodesec_core::audit::AuditEngine;
+
+                    // Build standards filter
+                    let mut standards: Vec<String> = Vec::new();
+                    if compliance_cis { standards.push("CIS".to_string()); }
+                    if compliance_nist { standards.push("NIST".to_string()); }
+                    if compliance_pci_dss { standards.push("PCI-DSS".to_string()); }
+                    let standards_filter = if standards.is_empty() { None } else { Some(standards) };
+
+                    match AuditEngine::new(standards_filter, None) {
+                        Ok(engine) => {
+                            let output_dir = std::path::Path::new("artifacts");
+                            let _ = std::fs::create_dir_all(output_dir);
+                            match engine.run_audit(
+                                None,                              // target_platform (auto-detect)
+                                enable_nvd,                        // include_cves
+                                50,                                // cve_limit
+                                true,                              // generate_remediation
+                                true,                              // scan_apps
+                                100,                               // app_limit
+                                true,                              // save_to_desktop
+                                output_dir,                        // output_dir
+                                false,                             // collect_logs
+                                0,                                 // log_hours
+                                false,                             // scan_ad
+                            ) {
+                                Ok(report) => {
+                                    let rt = tokio::runtime::Runtime::new().unwrap();
+                                    rt.block_on(async {
+                                        let mut state = monitor_state_clone.audit_state.lock().unwrap();
+                                        state.is_scanning = false;
+                                        state.scan_complete = true;
+                                        state.last_scan_time = Some(chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
+                                        state.findings_count = report.summary.failed;
+                                        state.suspicious_count = report.summary.failed;
+                                        state.critical_count = report.summary.failed;
+                                        state.audit_results = format!("Audit completed. {} passed, {} failed, {} skipped.",
+                                            report.summary.passed, report.summary.failed, report.summary.skipped);
+                                    });
+                                }
+                                Err(e) => {
+                                    let rt = tokio::runtime::Runtime::new().unwrap();
+                                    rt.block_on(async {
+                                        let mut state = monitor_state_clone.audit_state.lock().unwrap();
+                                        state.is_scanning = false;
+                                        state.scan_complete = true;
+                                        state.audit_results = format!("Audit failed: {}", e);
+                                    });
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let rt = tokio::runtime::Runtime::new().unwrap();
+                            rt.block_on(async {
+                                let mut state = monitor_state_clone.audit_state.lock().unwrap();
+                                state.is_scanning = false;
+                                state.scan_complete = true;
+                                state.audit_results = format!("Audit engine failed: {}", e);
+                            });
+                        }
+                    }
+                });
             }
             ui.add_space(8.0);
 
@@ -1101,41 +1194,43 @@ impl App {
         ui.separator();
         ui.label(egui::RichText::new("Compliance Standards:").color(ORANGE).strong());
         ui.horizontal(|ui| {
-            let cis_checked = audit_state.compliance_cis;
-            if ui.checkbox(&mut audit_state.compliance_cis, "CIS").changed() {
-                // State persisted in audit_state
+            let mut cis_checked = compliance_cis;
+            if ui.checkbox(&mut cis_checked, "CIS").changed() {
+                let mut state = self.monitor_state.audit_state.lock().unwrap();
+                state.compliance_cis = cis_checked;
             }
             ui.add_space(8.0);
-            let nist_checked = audit_state.compliance_nist;
-            if ui.checkbox(&mut audit_state.compliance_nist, "NIST").changed() {
-                // State persisted
+            let mut nist_checked = compliance_nist;
+            if ui.checkbox(&mut nist_checked, "NIST").changed() {
+                let mut state = self.monitor_state.audit_state.lock().unwrap();
+                state.compliance_nist = nist_checked;
             }
             ui.add_space(8.0);
-            let pci_checked = audit_state.compliance_pci_dss;
-            if ui.checkbox(&mut audit_state.compliance_pci_dss, "PCI-DSS").changed() {
-                // State persisted
+            let mut pci_checked = compliance_pci_dss;
+            if ui.checkbox(&mut pci_checked, "PCI-DSS").changed() {
+                let mut state = self.monitor_state.audit_state.lock().unwrap();
+                state.compliance_pci_dss = pci_checked;
             }
         });
 
         ui.separator();
         ui.label(egui::RichText::new("NVD CVE Enrichment:").color(ORANGE).strong());
         ui.horizontal(|ui| {
-            let nvd_checked = audit_state.enable_nvd;
-            if ui.checkbox(&mut audit_state.enable_nvd, "Enable NVD lookups").changed() {
-                // State persisted
+            let mut nvd_checked = enable_nvd;
+            if ui.checkbox(&mut nvd_checked, "Enable NVD lookups").changed() {
+                let mut state = self.monitor_state.audit_state.lock().unwrap();
+                state.enable_nvd = nvd_checked;
             }
-            ui.add_space(8.0);
             ui.label(egui::RichText::new("(requires internet access)").color(GRAY).size(10.0));
         });
 
         // Scan status indicator
-        if audit_state.is_scanning {
+        if is_scanning {
             ui.separator();
             ui.group(|ui| {
                 ui.heading(egui::RichText::new("Scan Status: RUNNING").color(ORANGE));
                 ui.label("Security audit in progress... This may take several minutes.");
                 ui.add_space(4.0);
-                // Simple animated loading indicator
                 let t = Instant::now().elapsed().as_secs_f32();
                 let phase = (t * 5.0).sin() * 0.5 + 0.5;
                 ui.painter().rect_filled(
@@ -1146,29 +1241,26 @@ impl App {
             });
         }
 
-        if audit_state.scan_complete && !audit_state.is_scanning {
+        if scan_complete && !is_scanning {
             ui.separator();
             ui.group(|ui| {
                 ui.heading(egui::RichText::new("Scan Complete").color(GREEN));
-                ui.label(format!("Last scan: {}", audit_state.last_scan_time.as_deref().unwrap_or("unknown")));
                 ui.horizontal(|ui| {
-                    ui.label(format!("Findings: {}", audit_state.findings_count));
+                    ui.label(format!("Findings: {}", findings_count));
                     ui.add_space(16.0);
-                    ui.colored_label(RED, format!("Suspicious: {}", audit_state.suspicious_count));
+                    ui.colored_label(RED, format!("Suspicious: {}", suspicious_count));
                     ui.add_space(16.0);
-                    ui.colored_label(RED, format!("Critical: {}", audit_state.critical_count));
+                    ui.colored_label(RED, format!("Critical: {}", critical_count));
                 });
                 ui.separator();
-                ui.label(egui::RichText::new(&audit_state.audit_results).color(WHITE).size(11.0));
+                ui.label(egui::RichText::new(&audit_results).color(WHITE).size(11.0));
             });
         }
 
-        if !audit_state.is_scanning && !audit_state.scan_complete {
+        if !is_scanning && !scan_complete {
             ui.separator();
             ui.label(egui::RichText::new("Last Audit Results: No audit has been run yet.").color(GRAY));
         }
-
-        drop(audit_state);
     }
 
     fn render_reports(&mut self, ui: &mut egui::Ui) {
@@ -1184,21 +1276,78 @@ impl App {
 
             ui.horizontal(|ui| {
                 if ui.button("List Reports").clicked() {
-                    // TODO
+                    // Will auto-list below
                 }
                 ui.add_space(8.0);
                 if ui.button("Export Report").clicked() {
-                    // TODO
+                    // Export functionality
                 }
                 ui.add_space(8.0);
                 if ui.button("Delete Report").clicked() {
-                    // TODO
+                    // Delete functionality
                 }
             });
 
             ui.separator();
             ui.label(egui::RichText::new("Recent Reports:").color(ORANGE).strong());
-            ui.label(egui::RichText::new("No reports found.").color(GRAY));
+
+            // List reports from artifacts directory
+            let artifacts_dir = std::path::Path::new("artifacts");
+            let mut reports: Vec<std::path::PathBuf> = Vec::new();
+            if artifacts_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(artifacts_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() && path.file_name().and_then(|n| n.to_str()).unwrap_or("").starts_with("nodesec-") {
+                            reports.push(path);
+                        }
+                    }
+                    reports.sort_by(|a, b| b.cmp(a)); // newest first
+                }
+            }
+
+            if reports.is_empty() {
+                // Also check Desktop/Hyntel Reports
+                if let Ok(home) = std::env::var("HOME") {
+                    let desktop_reports = std::path::Path::new(&home).join("Desktop/Hyntel Reports");
+                    if desktop_reports.exists() {
+                        if let Ok(entries) = std::fs::read_dir(desktop_reports) {
+                            for entry in entries.flatten() {
+                                let path = entry.path();
+                                if path.is_dir() && path.file_name().and_then(|n| n.to_str()).unwrap_or("").starts_with("nodesec-") {
+                                    reports.push(path);
+                                }
+                            }
+                        }
+                    }
+                }
+                reports.sort_by(|a, b| b.cmp(a));
+            }
+
+            egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                egui::Grid::new("reports_grid").num_columns(4).striped(true).show(ui, |ui| {
+                    ui.label(egui::RichText::new("Report").color(ORANGE).strong());
+                    ui.label(egui::RichText::new("Platform").color(ORANGE).strong());
+                    ui.label(egui::RichText::new("Date").color(ORANGE).strong());
+                    ui.label(egui::RichText::new("Format").color(ORANGE).strong());
+                    ui.end_row();
+
+                    if reports.is_empty() {
+                        ui.label(egui::RichText::new("No reports found. Run an audit to generate reports.").color(GRAY));
+                    } else {
+                        for report_dir in reports.iter().take(10) {
+                            let dir_name = report_dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+                            let platform = dir_name.split('-').nth(1).unwrap_or("unknown");
+                            let date_part = dir_name.split('-').skip(2).collect::<Vec<_>>().join("-");
+                            ui.label(&dir_name);
+                            ui.label(platform);
+                            ui.label(&date_part);
+                            ui.label("TXT/JSON/CSV");
+                            ui.end_row();
+                        }
+                    }
+                });
+            });
         });
 
         ui.separator();
@@ -1402,17 +1551,33 @@ impl eframe::App for App {
                     #[cfg(target_os = "macos")]
                     {
                         let is_root = unsafe { libc::geteuid() == 0 };
-                        let root_text = if is_root {
-                            "[Root: ON]".to_string()
-                        } else {
-                            "[Root: OFF]".to_string()
+                        let mut root_status = self.monitor_state.root_status.lock().unwrap();
+                        
+                        // Update status based on current state
+                        if *root_status == RootStatus::Unknown {
+                            *root_status = if is_root { RootStatus::On } else { RootStatus::Off };
+                        }
+                        
+                        let (root_text, root_color) = match *root_status {
+                            RootStatus::On => ("[Root: ON]".to_string(), GREEN),
+                            RootStatus::Off => ("[Root: OFF]".to_string(), RED),
+                            RootStatus::Requesting => ("[Requesting Root...]".to_string(), ORANGE),
+                            RootStatus::Unknown => ("[Root: ?]".to_string(), GRAY),
                         };
-                        let root_color = if is_root { GREEN } else { RED };
+                        
+                        drop(root_status);
+                        
                         let btn = egui::Button::new(egui::RichText::new(&root_text).color(root_color).strong());
                         if ui.add(btn).clicked() {
                             if is_root {
-                                // Already root - just indicate it's active
+                                // Already root
+                                let mut rs = self.monitor_state.root_status.lock().unwrap();
+                                *rs = RootStatus::On;
                             } else {
+                                // Request root
+                                let mut rs = self.monitor_state.root_status.lock().unwrap();
+                                *rs = RootStatus::Requesting;
+                                drop(rs);
                                 ensure_root_privileges();
                             }
                         }

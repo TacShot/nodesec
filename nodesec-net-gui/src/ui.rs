@@ -378,19 +378,71 @@ pub fn block_ip(ip: &str, pid: u32, process_name: &str, monitor_state: &crate::s
     });
 }
 
-pub fn render_alerts(ui: &mut egui::Ui, alerts: &[String]) {
-    if alerts.is_empty() {
-        ui.centered_and_justified(|ui| {
-            ui.label(egui::RichText::new("No alerts").color(GRAY));
-        });
-    } else {
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for alert in alerts.iter() {
-                ui.group(|ui| {
-                    ui.label(egui::RichText::new(alert).color(RED));
-                });
+pub fn render_alerts(ui: &mut egui::Ui, monitor_state: &crate::state::MonitorState) {
+    // Clone alerts data and release lock before egui rendering
+    let alerts_data = {
+        let alerts = monitor_state.alerts.lock().unwrap();
+        if alerts.is_empty() {
+            ui.centered_and_justified(|ui| {
+                ui.label(egui::RichText::new("No alerts").color(GRAY));
+            });
+            return;
+        }
+        alerts.clone()
+    };
+
+    let mut to_dismiss: Vec<usize> = Vec::new();
+    let mut to_terminate: Vec<usize> = Vec::new();
+    let mut to_block_ip: Vec<usize> = Vec::new();
+    let mut to_block_port: Vec<usize> = Vec::new();
+
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        for (i, alert) in alerts_data.iter().enumerate() {
+            if alert.dismissed {
+                continue;
             }
-        });
+            let threat_color = if alert.threat_score >= 75 { RED } else { YELLOW };
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(format!(
+                        "[{}] {} -> {}:{} (PID: {}, Score: {})",
+                        alert.timestamp,
+                        alert.process_name,
+                        alert.dst_ip,
+                        alert.dst_port,
+                        alert.pid,
+                        alert.threat_score
+                    )).color(threat_color));
+                    ui.add_space(8.0);
+                    if ui.button("Terminate").clicked() {
+                        to_terminate.push(i);
+                    }
+                    if ui.button("Block IP").clicked() {
+                        to_block_ip.push(i);
+                    }
+                    if ui.button("Block Port").clicked() {
+                        to_block_port.push(i);
+                    }
+                    if ui.button("Dismiss").clicked() {
+                        to_dismiss.push(i);
+                    }
+                });
+            });
+        }
+    });
+
+    // Execute actions after egui rendering (lock released)
+    for &i in &to_terminate {
+        monitor_state.terminate_alert_process(i);
+    }
+    for &i in &to_block_ip {
+        monitor_state.block_alert_ip(i);
+    }
+    for &i in &to_block_port {
+        monitor_state.block_alert_port(i);
+    }
+    for &i in &to_dismiss {
+        monitor_state.dismiss_alert(i);
     }
 }
 

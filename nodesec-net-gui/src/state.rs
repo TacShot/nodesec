@@ -196,6 +196,19 @@ pub enum ActionType {
     IgnoreRuleRemove,
 }
 
+/// Structured alert entry with actionable data
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AlertEntry {
+    pub timestamp: String,
+    pub process_name: String,
+    pub dst_ip: String,
+    pub dst_port: u16,
+    pub pid: u32,
+    pub threat_score: u8,
+    pub is_suspicious: bool,
+    pub dismissed: bool,
+}
+
 /// Ignore rule for connections
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IgnoreRule {
@@ -283,7 +296,7 @@ pub struct AuditState {
 
 pub struct MonitorState {
     pub connections: Arc<Mutex<Vec<ConnectionItem>>>,
-    pub alerts: Arc<Mutex<Vec<String>>>,
+    pub alerts: Arc<Mutex<Vec<AlertEntry>>>,
     pub stats: Arc<Mutex<ConnectionStats>>,
     pub monitor: Arc<TokioMutex<Option<Box<dyn nodesec_core::network::common::NetworkMonitor + Send>>>>,
     pub monitoring: Arc<Mutex<bool>>,
@@ -295,6 +308,23 @@ pub struct MonitorState {
     pub audit_state: Arc<Mutex<AuditState>>,
     pub connected_devices: Arc<Mutex<Vec<nodesec_core::models::ConnectedDevice>>>,
     pub exclusion_list: Arc<Mutex<nodesec_core::models::ExclusionList>>,
+    pub crypto_miner_rulebook: Arc<Mutex<nodesec_core::models::CryptoMinerRulebook>>,
+    pub root_status: Arc<Mutex<RootStatus>>,
+}
+
+/// Root privilege status
+#[derive(Debug, Clone, PartialEq)]
+pub enum RootStatus {
+    Unknown,
+    Off,
+    On,
+    Requesting,
+}
+
+impl Default for RootStatus {
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 impl MonitorState {
@@ -313,6 +343,8 @@ impl MonitorState {
             audit_state: Arc::new(Mutex::new(AuditState::default())),
             connected_devices: Arc::new(Mutex::new(Vec::new())),
             exclusion_list: Arc::new(Mutex::new(nodesec_core::models::ExclusionList::default())),
+            crypto_miner_rulebook: Arc::new(Mutex::new(nodesec_core::models::CryptoMinerRulebook::new())),
+            root_status: Arc::new(Mutex::new(RootStatus::default())),
         }
     }
     
@@ -337,5 +369,41 @@ impl MonitorState {
     pub fn should_ignore(&self, conn: &NetworkConnection) -> bool {
         let settings = self.scan_settings.lock().unwrap();
         settings.ignore_rules.iter().any(|r| r.matches(conn))
+    }
+
+    pub fn add_alert(&self, entry: AlertEntry) {
+        let mut alerts = self.alerts.lock().unwrap();
+        alerts.insert(0, entry);
+        if alerts.len() > 100 {
+            alerts.pop();
+        }
+    }
+
+    pub fn dismiss_alert(&self, index: usize) {
+        let mut alerts = self.alerts.lock().unwrap();
+        if index < alerts.len() {
+            alerts[index].dismissed = true;
+        }
+    }
+
+    pub fn terminate_alert_process(&self, index: usize) {
+        let alerts = self.alerts.lock().unwrap();
+        if let Some(alert) = alerts.get(index) {
+            crate::monitor::terminate_process(alert.pid, &alert.process_name, self);
+        }
+    }
+
+    pub fn block_alert_ip(&self, index: usize) {
+        let alerts = self.alerts.lock().unwrap();
+        if let Some(alert) = alerts.get(index) {
+            crate::monitor::block_ip(&alert.dst_ip, alert.pid, &alert.process_name, self);
+        }
+    }
+
+    pub fn block_alert_port(&self, index: usize) {
+        let alerts = self.alerts.lock().unwrap();
+        if let Some(alert) = alerts.get(index) {
+            crate::monitor::block_port(alert.dst_port, alert.pid, &alert.process_name, self);
+        }
     }
 }

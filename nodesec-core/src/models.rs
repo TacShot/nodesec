@@ -504,3 +504,98 @@ impl ExclusionList {
         self.rules.iter().any(|r| r.matches(conn))
     }
 }
+
+/// Known crypto miner process names and patterns for detection.
+/// Users can customize this list via the GUI or config file.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CryptoMinerRulebook {
+    pub enabled: bool,
+    pub process_names: Vec<String>,
+    pub process_paths: Vec<String>,
+    pub custom_rules: Vec<String>,
+    pub threat_score: u8,
+}
+
+impl CryptoMinerRulebook {
+    pub fn new() -> Self {
+        Self {
+            enabled: true,
+            process_names: vec![
+                "xmrig".to_string(),
+                "xmr-stak".to_string(),
+                "minerd".to_string(),
+                "cgminer".to_string(),
+                "bfgminer".to_string(),
+                "cpuminer".to_string(),
+                "ccminer".to_string(),
+                "claymore".to_string(),
+                "ethminer".to_string(),
+                "phoenixminer".to_string(),
+                "lolminer".to_string(),
+                "teamredminer".to_string(),
+                "nbminer".to_string(),
+                "gminer".to_string(),
+                "t-rex".to_string(),
+                "nanominer".to_string(),
+                "srbbminer".to_string(),
+                "xmrrig".to_string(),
+                "xmrigproxy".to_string(),
+                "xmrigdaemon".to_string(),
+            ],
+            process_paths: vec![],
+            custom_rules: vec![],
+            threat_score: 85,
+        }
+    }
+
+    /// Check if a process name matches any known crypto miner pattern
+    pub fn is_crypto_miner(&self, process_name: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
+
+        let name_lower = process_name.to_lowercase();
+
+        // Exact and contains matching for known miner names
+        if self.process_names.iter().any(|known| {
+            name_lower.contains(&known.to_lowercase())
+        }) {
+            return true;
+        }
+
+        // Custom rule matching (substring)
+        for rule in &self.custom_rules {
+            if !rule.is_empty() && name_lower.contains(&rule.to_lowercase()) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a process path matches any known crypto miner path pattern
+    pub fn is_suspicious_path(&self, process_path: Option<&str>) -> bool {
+        if !self.enabled {
+            return false;
+        }
+
+        if let Some(path) = process_path {
+            let path_lower = path.to_lowercase();
+            // Common suspicious locations for miners
+            let suspicious_dirs = [
+                "/tmp/",
+                "/var/tmp/",
+                "/dev/shm/",
+                "/app/",
+                "\\temp\\",
+                "\\tmp\\",
+                "appdata\\local\\temp",
+            ];
+            if suspicious_dirs.iter().any(|dir| path_lower.contains(dir)) {
+                return true;
+            }
+        }
+
+        false
+    }
+}
