@@ -127,6 +127,11 @@ struct App {
     // Sort cooldown to prevent rapid reordering from short-lived connections
     last_conn_sort: Instant,
     last_proc_sort: Instant,
+    // Track last sorted field/dir for immediate sort on change
+    prev_conn_sort_field: SortField,
+    prev_conn_sort_dir: SortDir,
+    prev_proc_sort_field: SortField,
+    prev_proc_sort_dir: SortDir,
     // Graph pan/zoom state
     graph_offset: egui::Vec2,
     graph_zoom: f32,
@@ -158,6 +163,10 @@ impl App {
             proc_sort_dir: SortDir::Asc,
             last_conn_sort: Instant::now(),
             last_proc_sort: Instant::now(),
+            prev_conn_sort_field: SortField::Time,
+            prev_conn_sort_dir: SortDir::Desc,
+            prev_proc_sort_field: SortField::Process,
+            prev_proc_sort_dir: SortDir::Asc,
             graph_offset: egui::Vec2::ZERO,
             graph_zoom: 1.0,
         }
@@ -263,9 +272,11 @@ impl App {
         // Apply filter and exclude terminated PIDs
         connections.retain(|item| self.filter.matches(item) && !terminated.contains(&item.connection.pid));
 
-        // Sort (with cooldown to prevent rapid reordering from short-lived connections)
+        // Sort immediately when sort field/dir changes, otherwise use cooldown
+        let sort_changed = self.prev_conn_sort_field != self.conn_sort_field
+            || self.prev_conn_sort_dir != self.conn_sort_dir;
         let sort_elapsed = self.last_conn_sort.elapsed();
-        if sort_elapsed.as_secs_f32() > 2.0 {
+        if sort_changed || sort_elapsed.as_secs_f32() > 2.0 {
             connections.sort_by(|a, b| {
                 let ordering = match self.conn_sort_field {
                     SortField::Process => a.connection.process_name.cmp(&b.connection.process_name),
@@ -289,6 +300,8 @@ impl App {
                 }
             });
             self.last_conn_sort = Instant::now();
+            self.prev_conn_sort_field = self.conn_sort_field;
+            self.prev_conn_sort_dir = self.conn_sort_dir;
         }
 
         egui::ScrollArea::both().show(ui, |ui| {
@@ -615,9 +628,11 @@ impl App {
             })
             .collect();
 
-        // Sort processes (with cooldown to prevent rapid reordering)
+        // Sort processes immediately on change, otherwise use cooldown
+        let proc_sort_changed = self.prev_proc_sort_field != self.proc_sort_field
+            || self.prev_proc_sort_dir != self.proc_sort_dir;
         let sort_elapsed = self.last_proc_sort.elapsed();
-        if sort_elapsed.as_secs_f32() > 0.5 {
+        if proc_sort_changed || sort_elapsed.as_secs_f32() > 0.5 {
             processes.sort_by(|a, b| {
                 let ordering = match self.proc_sort_field {
                     SortField::Score => a.2.cmp(&b.2),
@@ -636,6 +651,8 @@ impl App {
                 }
             });
             self.last_proc_sort = Instant::now();
+            self.prev_proc_sort_field = self.proc_sort_field;
+            self.prev_proc_sort_dir = self.proc_sort_dir;
         }
 
         let available = ui.available_rect_before_wrap();
@@ -750,7 +767,7 @@ impl App {
                 // Clickable cell (left-click selects)
                 let response = ui.interact(
                     cell_rect,
-                    ui.id().with(format!("pt_cell_{}", i)),
+                    ui.id().with(format!("pt_cell_{}", key)),
                     egui::Sense::click(),
                 );
                 if response.clicked() {
@@ -953,16 +970,16 @@ impl App {
         }
 
         // Clickable overlays for each cell
-        for (i, (cell_rect, cell_key)) in cell_rects.iter().enumerate() {
+        for (cell_rect, cell_key) in cell_rects.iter() {
             let cell_pid: u32 = cell_key.split(':').next().unwrap_or(&"0").parse().unwrap_or(0);
-            let widget_id = format!("cg_cell_{}_{}", i, cell_pid);
+            let widget_id = format!("cg_cell_{}", cell_key);
             let response = ui.interact(
                 *cell_rect,
                 ui.id().with(widget_id),
                 egui::Sense::click(),
             );
             if response.clicked() {
-                self.details_selected_node = Some(format!("cell_{}", i));
+                self.details_selected_node = Some(format!("cell_{}", cell_key));
                 self.details_selected_tab = Tab::ConnectionGraph;
                 // Find the first connection for this cell's process
                 if let Some(item) = connections.iter().find(|item| {
@@ -977,16 +994,6 @@ impl App {
 
         // Set minimum scrollable size
         ui.set_min_size(egui::vec2(available.width(), total_height));
-
-        // Details panel for selected cell (bottom section)
-        if let Some(ref conn) = self.details_selected_conn {
-            let item = crate::state::ConnectionItem {
-                connection: conn.clone(),
-                threat_level: crate::state::ThreatLevel::from_score(conn.threat_score),
-            };
-            ui.separator();
-            crate::ui::render_connection_detail_topdown(ui, &item, &self.monitor_state);
-        }
     }
 
     fn render_devices(&mut self, ui: &mut egui::Ui) {
@@ -1846,6 +1853,10 @@ pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
             proc_sort_dir: SortDir::Asc,
             last_conn_sort: Instant::now(),
             last_proc_sort: Instant::now(),
+            prev_conn_sort_field: SortField::Time,
+            prev_conn_sort_dir: SortDir::Desc,
+            prev_proc_sort_field: SortField::Process,
+            prev_proc_sort_dir: SortDir::Asc,
             graph_offset: egui::Vec2::ZERO,
             graph_zoom: 1.0,
         };
