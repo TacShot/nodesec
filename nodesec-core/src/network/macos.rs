@@ -212,14 +212,21 @@ impl MacOSNetworkMonitor {
         };
 
         // Parse "ip:port" or "[ipv6]:port" from local_part
+        // lsof on macOS uses ":" as IP:port separator (e.g., 192.168.1.100:50789)
         let (port_str,) = if local_part.starts_with('[') {
             let end = local_part.find(']')?;
             let port = &local_part[end + 2..]; // skip "]:"
             (port,)
         } else {
-            let last_dot = local_part.rfind('.')?;
-            let port = &local_part[last_dot + 1..];
-            (port,)
+            // Try colon first (lsof standard), fall back to dot
+            if let Some(last_colon) = local_part.rfind(':') {
+                let port = &local_part[last_colon + 1..];
+                (port,)
+            } else {
+                let last_dot = local_part.rfind('.')?;
+                let port = &local_part[last_dot + 1..];
+                (port,)
+            }
         };
 
         let src_port: u16 = port_str.parse().ok()?;

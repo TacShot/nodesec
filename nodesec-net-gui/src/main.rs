@@ -460,7 +460,7 @@ impl App {
                 ui.group(|ui| {
                     ui.set_min_width(ui.available_width());
                     ui.colored_label(RED, egui::RichText::new("[!] Process names require root").strong());
-                    ui.label("Use [Request Root] in header for real PIDs. Mock mode below.");
+                    ui.label("Click the [Root: OFF] toggle in the header to request root privileges for real PIDs.");
                 });
                 ui.separator();
             }
@@ -1398,7 +1398,7 @@ impl eframe::App for App {
                     }
                     ui.add_space(8.0);
 
-                    // Root privilege indicator and request button (macOS only)
+                    // Root privilege toggle button (macOS only)
                     #[cfg(target_os = "macos")]
                     {
                         let is_root = unsafe { libc::geteuid() == 0 };
@@ -1408,10 +1408,13 @@ impl eframe::App for App {
                             "[Root: OFF]".to_string()
                         };
                         let root_color = if is_root { GREEN } else { RED };
-                        ui.colored_label(root_color, root_text);
-                        ui.add_space(4.0);
-                        if !is_root && ui.button("Request Root").clicked() {
-                            ensure_root_privileges();
+                        let btn = egui::Button::new(egui::RichText::new(&root_text).color(root_color).strong());
+                        if ui.add(btn).clicked() {
+                            if is_root {
+                                // Already root - just indicate it's active
+                            } else {
+                                ensure_root_privileges();
+                            }
                         }
                     }
                     ui.add_space(8.0);
