@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 use nodesec_core::{
     models::Platform,
     network::{linux::LinuxNetworkMonitor, macos::MacOSNetworkMonitor, windows::WindowsNetworkMonitor, common::NetworkMonitor},
+    threat::ThreatDetector,
 };
 use tokio::task::spawn_blocking;
 
@@ -44,13 +45,15 @@ pub fn start_monitoring(
             }
         }
 
+        let scan_interval = monitor_state.scan_settings.lock().unwrap().scan_interval_seconds;
+
         loop {
             // Check if still monitoring
             if !*monitoring_flag.lock().unwrap() {
                 break;
             }
 
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(scan_interval)).await;
 
             // Check if still monitoring
             if !*monitoring_flag.lock().unwrap() {
@@ -85,8 +88,13 @@ pub fn start_monitoring(
             };
 
             for event in events {
-                let threat_level = crate::state::threat_level_from_score(event.threat_score);
-                let is_suspicious = event.is_suspicious;
+                // Apply threat detection
+                let threat_score = {
+                    let mut detector = monitor_state.threat_detector.lock().unwrap();
+                    detector.analyze(&mut event.clone())
+                };
+                let threat_level = crate::state::threat_level_from_score(threat_score);
+                let is_suspicious = threat_score >= 50;
 
                 // Add to connections
                 {
@@ -110,7 +118,7 @@ pub fn start_monitoring(
                         event.dst_ip,
                         event.dst_port,
                         event.pid,
-                        event.threat_score
+                        threat_score
                     ));
                     if alts.len() > 100 {
                         alts.truncate(100);

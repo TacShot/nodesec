@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as TokioMutex;
 use nodesec_core::models::{NetworkConnection, Platform};
+use nodesec_core::threat::ThreatDetector;
 use std::collections::VecDeque;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -257,6 +258,7 @@ pub struct MonitorState {
     pub filter: Arc<Mutex<FilterSettings>>,
     pub action_log: Arc<Mutex<VecDeque<ActionLogEntry>>>,
     pub scan_settings: Arc<Mutex<ScanSettings>>,
+    pub threat_detector: Arc<Mutex<ThreatDetector>>,
 }
 
 impl MonitorState {
@@ -271,6 +273,7 @@ impl MonitorState {
             filter: Arc::new(Mutex::new(FilterSettings::default())),
             action_log: Arc::new(Mutex::new(VecDeque::with_capacity(1000))),
             scan_settings: Arc::new(Mutex::new(ScanSettings::default())),
+            threat_detector: Arc::new(Mutex::new(ThreatDetector::new())),
         }
     }
     

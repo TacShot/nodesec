@@ -82,7 +82,7 @@ pub fn render_connections_table(
     ui.separator();
     
     // Connections table with horizontal scrolling
-    egui::ScrollArea::both().show(ui, |ui| {
+    egui::ScrollArea::vertical().show(ui, |ui| {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
         egui::Grid::new("connections_table")
             .striped(true)
@@ -99,41 +99,44 @@ pub fn render_connections_table(
                 ui.label(egui::RichText::new("Threat").color(ORANGE).strong());
                 ui.label(egui::RichText::new("Score").color(ORANGE).strong());
                 ui.end_row();
-                
+
                 for (i, item) in connections.iter().enumerate() {
                     if !filter.matches(item) {
                         continue;
                     }
-                    
+
                     let conn = &item.connection;
                     let threat_color = item.threat_level.color();
-                    
+
                     let src = format!("{}:{}", conn.src_ip, conn.src_port);
                     let dst = format!("{}:{}", conn.dst_ip, conn.dst_port);
                     let proto = format!("{:?}", conn.protocol);
                     let time = chrono::DateTime::from_timestamp(conn.timestamp as i64, 0)
-                                            .map(|dt| dt.format("%H:%M:%S").to_string())
-                                            .unwrap_or_default();
-                   
-                                        // Use a selectable area for the entire row
-                                        let row_rect = ui.max_rect();
-                                        let response = ui.allocate_rect(row_rect, egui::Sense::click());
-                    
-                                        if response.clicked() {
-                                            *selected_connection = Some(i);
-                                        }
-                   
-                                        // Selection checkbox
-                                        ui.selectable_value(&mut *selected_connection, Some(i), "");
-                                        ui.label(time);
+                        .map(|dt| dt.format("%H:%M:%S").to_string())
+                        .unwrap_or_default();
+
+                    let is_selected = *selected_connection == Some(i);
+
+                    // Use selectable_label for full row selection
+                    let display_name = if conn.process_name.is_empty() {
+                        "unknown".to_string()
+                    } else {
+                        conn.process_name.clone()
+                    };
+
+                    let response = ui.selectable_label(is_selected, display_name);
+                    if response.clicked() {
+                        *selected_connection = Some(i);
+                    }
+
+                    ui.label(time);
                     ui.label(conn.pid.to_string());
-                    ui.label(&conn.process_name);
                     ui.label(proto);
                     ui.label(src);
                     ui.label(dst);
                     ui.label(egui::RichText::new(item.threat_level.label()).color(threat_color).strong());
                     ui.label(egui::RichText::new(conn.threat_score.to_string()).color(threat_color));
-                    
+
                     ui.end_row();
                 }
             });
