@@ -120,6 +120,8 @@ struct App {
     // Graph pan/zoom state
     graph_offset: egui::Vec2,
     graph_zoom: f32,
+    // Mock resolver state for dev mode (when not root)
+    mock_resolver_enabled: bool,
 }
 
 impl App {
@@ -150,6 +152,7 @@ impl App {
             last_proc_sort: Instant::now(),
             graph_offset: egui::Vec2::ZERO,
             graph_zoom: 1.0,
+            mock_resolver_enabled: false,
         }
     }
 
@@ -440,8 +443,7 @@ impl App {
     }
 
     fn render_process_tree(&mut self, ui: &mut egui::Ui) {
-        // Hub-and-spoke process tree (like image 4)
-        // Central hub at bottom, processes branch up with colored lines
+        // Process Tree: horizontal list of process cells with branch lines to hub
         ui.heading(egui::RichText::new("Connection Processes").color(ORANGE));
         ui.separator();
 
@@ -452,15 +454,30 @@ impl App {
             if !is_root {
                 ui.group(|ui| {
                     ui.set_min_width(ui.available_width());
-                    ui.colored_label(RED, egui::RichText::new("[!] Process names require root privileges").strong());
-                    ui.label("Click \"Request Root\" in the header to enable PID/process name resolution via lsof.");
+                    ui.colored_label(RED, egui::RichText::new("[!] Process names require root").strong());
+                    ui.label("Use [Request Root] in header for real PIDs. Mock mode below.");
                 });
                 ui.separator();
             }
         }
 
-        ui.label(egui::RichText::new("Central hub = all connections • Branches = processes • Click process for details").color(GRAY).size(11.0));
+        ui.label(egui::RichText::new("Processes • Click cell for details").color(GRAY).size(11.0));
         ui.separator();
+
+        // Mock resolver toggle (dev mode only)
+        #[cfg(target_os = "macos")]
+        {
+            let is_root = unsafe { libc::geteuid() == 0 };
+            if !is_root {
+                ui.horizontal(|ui| {
+                    if ui.checkbox(&mut self.mock_resolver_enabled, "Show mock PIDs (dev mode)").changed() {
+                        // Mock resolver will be applied on next scan
+                    }
+                    ui.label("Assigns fake PIDs so UI is testable without root");
+                });
+                ui.separator();
+            }
+        }
 
         let connections: Vec<crate::state::ConnectionItem> = self
             .monitor_state
@@ -474,7 +491,7 @@ impl App {
 
         if connections.is_empty() {
             ui.centered_and_justified(|ui| {
-                ui.label(egui::RichText::new("No connections captured yet. Start monitoring to see connections.").color(GRAY));
+                ui.label(egui::RichText::new("No connections captured yet.").color(GRAY));
             });
             return;
         }
@@ -484,7 +501,11 @@ impl App {
         let mut process_map: HashMap<String, Vec<&crate::state::ConnectionItem>> = HashMap::new();
         for item in &connections {
             let key = if item.connection.pid == 0 && item.connection.process_name == "unknown" {
-                format!("unknown:{}", item.connection.src_port)
+                if self.mock_resolver_enabled {
+                    format!("mock:{}:{}", item.connection.src_port, item.connection.src_port)
+                } else {
+                    format!("unknown:{}", item.connection.src_port)
+                }
             } else {
                 format!("{}:{}", item.connection.pid, item.connection.process_name)
             };
@@ -499,7 +520,7 @@ impl App {
             })
             .collect();
 
-        // Sort by threat score descending (with cooldown to prevent rapid reordering)
+        // Sort by threat score descending (with cooldown)
         let sort_elapsed = self.last_proc_sort.elapsed();
         if sort_elapsed.as_secs_f32() > 2.0 {
             processes.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
@@ -511,14 +532,14 @@ impl App {
         let hub_x = available.min.x + available.width() / 2.0;
 
         // Cell dimensions
-        let cell_width = 180.0;
-        let cell_height = 70.0;
-        let cell_spacing = 20.0;
+        let cell_width = 160.0;
+        let cell_height = 60.0;
+        let cell_spacing = 15.0;
         let num_procs = processes.len();
         let total_width = num_procs as f32 * (cell_width + cell_spacing);
         let start_x = hub_x - total_width / 2.0;
 
-        // Draw branch lines from hub to each process cell (behind cells)
+        // Draw branch lines from hub to each process cell
         for (i, (_, _, threat_score)) in processes.iter().enumerate() {
             let cell_x = start_x + i as f32 * (cell_width + cell_spacing) + cell_width / 2.0;
             let cell_y = available.top() + cell_spacing;
@@ -530,41 +551,29 @@ impl App {
                 _ => RED,
             };
 
-            // Vertical-ish line from hub to cell
+            // Line from hub to cell
             ui.painter().line_segment(
-                [
-                    egui::pos2(hub_x, hub_y),
-                    egui::pos2(cell_x, cell_y + cell_height / 2.0),
-                ],
-                egui::Stroke::new(2.0, threat_color),
+                [egui::pos2(hub_x, hub_y), egui::pos2(cell_x, cell_y + cell_height / 2.0)],
+                egui::Stroke::new(1.5, threat_color),
             );
-
-            // Dot at top of branch
-            ui.painter().circle_filled(
-                egui::pos2(cell_x, cell_y + cell_height / 2.0),
-                4.0,
-                threat_color,
-            );
+            ui.painter().circle_filled(egui::pos2(cell_x, cell_y + cell_height / 2.0), 3.0, threat_color);
         }
 
-        // Draw hub at bottom center
-        let hub_rect = egui::Rect::from_center_size(
-            egui::pos2(hub_x, hub_y),
-            egui::vec2(180.0, 40.0),
-        );
-        ui.painter().rect_filled(hub_rect, 8.0, egui::Color32::from_rgb(60, 60, 60));
-        ui.painter().rect_stroke(hub_rect, 8.0, egui::Stroke::new(2.0, ORANGE));
+        // Hub at bottom center
+        let hub_rect = egui::Rect::from_center_size(egui::pos2(hub_x, hub_y), egui::vec2(160.0, 35.0));
+        ui.painter().rect_filled(hub_rect, 6.0, egui::Color32::from_rgb(50, 50, 50));
+        ui.painter().rect_stroke(hub_rect, 6.0, egui::Stroke::new(1.5, ORANGE));
         ui.painter().text(
             hub_rect.center(),
             egui::Align2::CENTER_CENTER,
             "All Connections",
-            egui::FontId::new(14.0, egui::FontFamily::Proportional),
+            egui::FontId::new(12.0, egui::FontFamily::Proportional),
             WHITE,
         );
 
-        // Draw process cells in a horizontal scrollable row with subtree connections below
+        // Draw process cells left-to-right
         egui::ScrollArea::horizontal().show(ui, |ui| {
-            ui.set_min_size(egui::vec2(total_width + cell_spacing * 2.0, 300.0));
+            ui.set_min_size(egui::vec2(total_width + cell_spacing * 2.0, cell_height + 40.0));
 
             for (i, (key, conns, threat_score)) in processes.iter().enumerate() {
                 let cell_x = start_x + i as f32 * (cell_width + cell_spacing);
@@ -581,79 +590,77 @@ impl App {
                     _ => RED,
                 };
 
-                let pid: u32 = key.split(':').next().unwrap_or(&"0").parse().unwrap_or(0);
+                // Determine PID display
+                let pid_str = if key.starts_with("mock:") {
+                    key.split(':').nth(1).unwrap_or(&"0").to_string()
+                } else if key.starts_with("unknown:") {
+                    "0".to_string()
+                } else {
+                    key.split(':').next().unwrap_or(&"0").to_string()
+                };
+                let pid: u32 = pid_str.parse().unwrap_or(0);
                 let is_selected = self.selected_process == Some(pid);
 
-                // Cell frame using painter (avoids clipping)
-                ui.painter().rect_filled(
-                    cell_rect,
-                    6.0,
-                    egui::Color32::from_rgb(40, 40, 40),
-                );
-                ui.painter().rect_stroke(
-                    cell_rect,
-                    6.0,
-                    egui::Stroke::new(2.0, if is_selected { WHITE } else { threat_color }),
-                );
+                // Cell frame
+                ui.painter().rect_filled(cell_rect, 5.0, egui::Color32::from_rgb(40, 40, 40));
+                ui.painter().rect_stroke(cell_rect, 5.0, egui::Stroke::new(1.5, if is_selected { WHITE } else { threat_color }));
 
-                // Cell content using painter text (avoids clip rect issues)
-                let center_x_cell = cell_rect.center().x;
-                let top_y = cell_rect.top() + 10.0;
+                // Cell content - painter text, no clipping
+                let cx = cell_rect.center().x;
+                let ty = cell_rect.top() + 8.0;
 
-                let display_name = if key.starts_with("unknown") {
-                    format!("Unknown (port {})", key.split(':').nth(1).unwrap_or(&"0"))
+                let display_name = if key.starts_with("mock:") || key.starts_with("unknown:") {
+                    format!("mock-{}", key.split(':').nth(1).unwrap_or(&"0"))
                 } else {
                     key.split(':').nth(1).unwrap_or(&key).to_string()
                 };
 
-                // Name
                 ui.painter().text(
-                    egui::pos2(center_x_cell, top_y),
+                    egui::pos2(cx, ty),
                     egui::Align2::CENTER_CENTER,
                     &display_name,
-                    egui::FontId::new(11.0, egui::FontFamily::Proportional),
+                    egui::FontId::new(10.0, egui::FontFamily::Proportional),
                     WHITE,
                 );
-                // PID
                 ui.painter().text(
-                    egui::pos2(center_x_cell, top_y + 18.0),
+                    egui::pos2(cx, ty + 16.0),
                     egui::Align2::CENTER_CENTER,
                     &format!("PID: {}", pid),
-                    egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                    egui::FontId::new(9.0, egui::FontFamily::Proportional),
                     GRAY,
                 );
-                // Connections count
                 ui.painter().text(
-                    egui::pos2(center_x_cell, top_y + 34.0),
+                    egui::pos2(cx, ty + 30.0),
                     egui::Align2::CENTER_CENTER,
-                    &format!("{} connections", conns.len()),
-                    egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                    &format!("{} conns", conns.len()),
+                    egui::FontId::new(9.0, egui::FontFamily::Proportional),
                     ORANGE,
                 );
-                // Threat score
                 ui.painter().text(
-                    egui::pos2(center_x_cell, top_y + 50.0),
+                    egui::pos2(cx, ty + 44.0),
                     egui::Align2::CENTER_CENTER,
                     &format!("Threat: {}", threat_score),
-                    egui::FontId::new(9.0, egui::FontFamily::Proportional),
+                    egui::FontId::new(8.0, egui::FontFamily::Proportional),
                     threat_color,
                 );
 
-                // Clickable overlay for the cell (left-click selects)
+                // Clickable cell (left-click selects)
                 let response = ui.interact(
                     cell_rect,
-                    ui.id().with(format!("proc_cell_{}", i)),
+                    ui.id().with(format!("pt_cell_{}", i)),
                     egui::Sense::click(),
                 );
                 if response.clicked() {
-                    self.selected_process = Some(pid);
-                    self.details_selected_pid = Some(pid);
-                    self.details_selected_tab = Tab::ProcessTree;
+                    if pid > 0 {
+                        self.selected_process = Some(pid);
+                        self.details_selected_pid = Some(pid);
+                        self.details_selected_tab = Tab::ProcessTree;
+                    }
                 }
             }
         });
 
-        // Details panel for selected process (bottom section)
+        // Details panel for selected process
         if let Some(pid) = self.selected_process {
             let all_conns: Vec<crate::state::ConnectionItem> = self
                 .monitor_state
@@ -687,7 +694,7 @@ impl App {
         ui.heading(egui::RichText::new("Connection Graph (Cell View)").color(ORANGE));
         ui.separator();
 
-        ui.label(egui::RichText::new("Cells = processes • Lines = shared connections • Drag to pan • Scroll to zoom • Click cell for details").color(GRAY).size(11.0));
+        ui.label(egui::RichText::new("Cells = processes • Lines = shared connections • Right-drag to pan • Click cell for details").color(GRAY).size(11.0));
         ui.separator();
 
         let connections: Vec<crate::state::ConnectionItem> = self
@@ -712,7 +719,11 @@ impl App {
         let mut process_cells: HashMap<String, Vec<&crate::state::ConnectionItem>> = HashMap::new();
         for item in &connections {
             let key = if item.connection.pid == 0 && item.connection.process_name == "unknown" {
-                format!("unknown:{}", item.connection.src_port)
+                if self.mock_resolver_enabled {
+                    format!("mock:{}:{}", item.connection.src_port, item.connection.src_port)
+                } else {
+                    format!("unknown:{}", item.connection.src_port)
+                }
             } else {
                 format!("{}:{}", item.connection.pid, item.connection.process_name)
             };
@@ -750,7 +761,7 @@ impl App {
         // Handle pan input - only pan when RIGHT mouse button is held down
         let mut offset = self.graph_offset;
 
-        // Drag to pan: only when RIGHT mouse button is held
+        // Drag to pan: only when right mouse button is held
         if ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary)) {
             let drag_delta = ui.input(|i| i.pointer.delta());
             if drag_delta.length_sq() > 0.0 {
@@ -846,7 +857,7 @@ impl App {
         for (i, (cell_rect, _)) in cell_rects.iter().enumerate() {
             let response = ui.interact(
                 *cell_rect,
-                ui.id().with(format!("cell_btn_{}", i)),
+                ui.id().with(format!("cg_cell_{}", i)),
                 egui::Sense::click(),
             );
             if response.clicked() {
@@ -1336,6 +1347,7 @@ pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
             last_proc_sort: Instant::now(),
             graph_offset: egui::Vec2::ZERO,
             graph_zoom: 1.0,
+            mock_resolver_enabled: false,
         };
 
         eframe::run_native(
