@@ -672,15 +672,22 @@ impl App {
     }
 
     fn render_connection_graph(&mut self, ui: &mut egui::Ui) {
-        // Replaced force-directed graph (caused crashes) with a clickable connection list
-        // Each button shows connection details in the right sidebar details pane
-        ui.heading(egui::RichText::new("Connection List").color(ORANGE));
+        // Cell-based graph: each connection is a cell, lines connect related cells
+        ui.heading(egui::RichText::new("Connection Graph (Cell View)").color(ORANGE));
         ui.separator();
 
-        ui.label(egui::RichText::new("Click any connection to view details in the right sidebar").color(GRAY).size(11.0));
+        ui.label(egui::RichText::new("Cells = connections • Lines = related connections • Click cell for details").color(GRAY).size(11.0));
         ui.separator();
 
-        let connections = self.monitor_state.connections.lock().unwrap();
+        let connections: Vec<crate::state::ConnectionItem> = self
+            .monitor_state
+            .connections
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|item| self.filter.matches(item))
+            .cloned()
+            .collect();
 
         if connections.is_empty() {
             ui.centered_and_justified(|ui| {
@@ -689,23 +696,82 @@ impl App {
             return;
         }
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        // Build cell layout: group by source IP:port, each group is a cell cluster
+        let available = ui.available_rect_before_wrap();
+        let cell_width = 150.0;
+        let cell_height = 90.0;
+        let padding = 20.0;
+
+        // Simple grid layout for cells
+        let cols = (available.width() / (cell_width + padding)).max(1.0) as usize;
+        let rows = ((connections.len() as f32) / (cols as f32)).ceil() as usize;
+
+        // Track cell positions for drawing lines
+        let mut cell_positions: Vec<(egui::Pos2, usize)> = Vec::new();
+
+        // Draw connection lines first (behind cells)
+        let mut line_pairs: Vec<(egui::Pos2, egui::Pos2, egui::Color32)> = Vec::new();
+
+        // Calculate positions
+        for (i, item) in connections.iter().enumerate() {
+            let row = i / cols;
+            let col = i % cols;
+            let x = available.min.x + padding + col as f32 * (cell_width + padding);
+            let y = available.min.y + padding + row as f32 * (cell_height + padding);
+            let pos = egui::Pos2::new(x, y);
+            cell_positions.push((pos, i));
+        }
+
+        // Draw lines between connections sharing the same source or destination
+        for i in 0..connections.len() {
+            for j in (i + 1)..connections.len() {
+                let a = &connections[i];
+                let b = &connections[j];
+                let related = a.connection.src_ip == b.connection.src_ip
+                    || a.connection.dst_ip == b.connection.dst_ip
+                    || a.connection.src_port == b.connection.src_port
+                    || a.connection.dst_port == b.connection.dst_port;
+                if related {
+                    if let Some((pos_a, _)) = cell_positions.get(i) {
+                        if let Some((pos_b, _)) = cell_positions.get(j) {
+                            let threat_color = if a.connection.threat_score > 50 || b.connection.threat_score > 50 {
+                                RED
+                            } else {
+                                GRAY
+                            };
+                            line_pairs.push((*pos_a, *pos_b, threat_color));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Paint lines using a custom paint callback
+        let line_pairs_clone = line_pairs.clone();
+        ui.painter().add(egui::PaintCallback {
+            rect: available,
+            callback: std::sync::Arc::new(move |_info: &egui::PaintCallbackInfo, painter: &egui::Painter| {
+                for (p1, p2, color) in &line_pairs_clone {
+                    // Offset to start from cell edges
+                    let dir = (*p2 - *p1).normalized();
+                    let start = *p1 + dir * (cell_width / 2.0);
+                    let end = *p2 - dir * (cell_width / 2.0);
+                    painter.line_segment([start, end], egui::Stroke::new(1.5, *color));
+                }
+            }),
+        });
+
+        // Draw cells (no Grid — Grid crashes with interactive widgets)
+        egui::ScrollArea::both().show(ui, |ui| {
+            ui.set_min_size(egui::vec2(available.width(), (rows as f32 * (cell_height + padding)) + padding * 2.0));
 
             for (i, item) in connections.iter().enumerate() {
-                if !self.filter.matches(item) {
-                    continue;
-                }
-
                 let conn = &item.connection;
                 let threat_color = item.threat_level.color();
 
                 let src = format!("{}:{}", conn.src_ip, conn.src_port);
                 let dst = format!("{}:{}", conn.dst_ip, conn.dst_port);
                 let proto = format!("{:?}", conn.protocol);
-                let time = chrono::DateTime::from_timestamp(conn.timestamp as i64, 0)
-                    .map(|dt| dt.format("%H:%M:%S").to_string())
-                    .unwrap_or_default();
 
                 let display_name = if conn.process_name.is_empty() {
                     "unknown".to_string()
@@ -716,40 +782,39 @@ impl App {
                 let is_selected = self.details_selected_node == Some(format!("conn_{}", i));
 
                 egui::Frame::none()
-                    .fill(if is_selected { egui::Color32::from_rgb(60, 60, 60) } else { DARK_BG })
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(40, 40, 40)))
-                    .inner_margin(4.0)
+                    .fill(if is_selected {
+                        egui::Color32::from_rgb(60, 60, 60)
+                    } else {
+                        match conn.threat_score {
+                            0..=25 => egui::Color32::from_rgb(40, 60, 40),
+                            26..=49 => egui::Color32::from_rgb(60, 60, 40),
+                            50..=74 => egui::Color32::from_rgb(60, 40, 40),
+                            75..=89 => egui::Color32::from_rgb(80, 30, 30),
+                            _ => egui::Color32::from_rgb(100, 20, 20),
+                        }
+                    })
+                    .stroke(egui::Stroke::new(2.0, threat_color))
+                    .inner_margin(8.0)
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.add_space(2.0);
-
+                        ui.vertical_centered(|ui| {
                             let btn_text = if is_selected { "[Selected]" } else { "[View]" };
-                            if ui.small_button(btn_text).clicked() {
+                            if ui.button(btn_text).clicked() {
                                 self.details_selected_node = Some(format!("conn_{}", i));
                                 self.details_selected_tab = Tab::ConnectionGraph;
                                 self.details_selected_index = Some(i);
                             }
-                            ui.add_space(8.0);
 
-                            ui.label(time);
-                            ui.add_space(8.0);
-                            ui.label(conn.pid.to_string());
-                            ui.add_space(16.0);
-                            ui.label(&display_name);
-                            ui.add_space(16.0);
-                            ui.label(proto);
-                            ui.add_space(16.0);
-                            ui.label(src);
-                            ui.add_space(16.0);
-                            ui.label(dst);
-                            ui.add_space(16.0);
-                            ui.colored_label(threat_color, item.threat_level.label());
-                            ui.add_space(8.0);
-                            ui.colored_label(threat_color, conn.threat_score.to_string());
+                            ui.add_space(4.0);
+
+                            ui.label(egui::RichText::new(&display_name).color(WHITE).size(10.0).strong());
+                            ui.label(egui::RichText::new(&src).color(GRAY).size(9.0));
+                            ui.label(egui::RichText::new(&dst).color(GRAY).size(9.0));
+                            ui.label(egui::RichText::new(proto).color(ORANGE).size(9.0));
+                            ui.colored_label(threat_color, egui::RichText::new(format!("Threat: {}", conn.threat_score)).size(9.0));
                         });
                     });
 
-                ui.add_space(2.0);
+                ui.add_space(4.0);
             }
         });
     }
@@ -1260,5 +1325,48 @@ pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(target_os = "macos")]
+    {
+        ensure_root_privileges();
+    }
+
     run_net_gui()
 }
+
+/// On macOS, re-launch the application with root privileges using osascript password dialog.
+/// lsof requires root to see other processes' network connections.
+#[cfg(target_os = "macos")]
+fn ensure_root_privileges() {
+    use std::process::Command;
+
+    // Check if already root (euid == 0)
+    let is_root = unsafe { libc::geteuid() == 0 };
+
+    if is_root {
+        return;
+    }
+
+    // Get the current executable path
+    let exe_path = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+
+    let exe_str = exe_path.to_string_lossy();
+
+    // Use osascript to show a password dialog and re-launch with sudo
+    let applescript = format!(
+        "do shell script \"sudo '{}'\" with administrator privileges",
+        exe_str
+    );
+
+    let _ = Command::new("osascript")
+        .args(["-e", &applescript])
+        .spawn();
+
+    // Exit the current (non-root) instance
+    std::process::exit(0);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn ensure_root_privileges() {}
