@@ -163,24 +163,30 @@ impl MacOSNetworkMonitor {
 
     fn parse_lsof_name(&self, name: &str, pid: u32, process_name: &str, user: &str) -> Option<ProcessInfo> {
         // lsof NAME formats:
-        // "tcp4->192.168.1.1:50789" (established, has remote)
+        // "tcp4->192.168.1.100:50789" (established, simple)
+        // "tcp4->192.168.1.100:50789->172.217.3.46:443" (established with remote)
         // "tcp4@*:50789" (listening, wildcard local)
         // "tcp4->[::1]:50789" (IPv6)
 
-        let arrow_pos = name.find("->").or_else(|| name.find("@"))?;
-        let addr_part = &name[arrow_pos + 2..];
+        let proto_end = name.find("->").or_else(|| name.find("@"))?;
+        let after_proto = &name[proto_end + if name[proto_end..].starts_with("->") { 2 } else { 1 }..];
 
-        // Parse "ip:port" or "[ipv6]:port"
-        let (ip_str, port_str) = if addr_part.starts_with('[') {
-            let end = addr_part.find(']')?;
-            let ip = &addr_part[1..end];
-            let port = &addr_part[end + 2..]; // skip "]:"
-            (ip, port)
+        // Check if there's a second -> (remote address in established connections)
+        let local_part = if let Some(second_arrow) = after_proto.find("->") {
+            &after_proto[..second_arrow]
         } else {
-            let last_dot = addr_part.rfind('.')?;
-            let ip = &addr_part[..last_dot];
-            let port = &addr_part[last_dot + 1..];
-            (ip, port)
+            after_proto
+        };
+
+        // Parse "ip:port" or "[ipv6]:port" from local_part
+        let (port_str,) = if local_part.starts_with('[') {
+            let end = local_part.find(']')?;
+            let port = &local_part[end + 2..]; // skip "]:"
+            (port,)
+        } else {
+            let last_dot = local_part.rfind('.')?;
+            let port = &local_part[last_dot + 1..];
+            (port,)
         };
 
         let src_port: u16 = port_str.parse().ok()?;
