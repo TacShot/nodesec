@@ -1,6 +1,7 @@
 //! macOS network monitoring using libproc and NetworkExtension
 
 use crate::models::{MonitorMode, NetworkProtocol, Platform, ExclusionList};
+use serde_json::{Map, Value};
 use crate::network::common::{NetworkConnection, NetworkMonitor};
 use anyhow::{Context, Result};
 use std::collections::VecDeque;
@@ -736,8 +737,8 @@ impl MacOSNetworkMonitor {
 
 // Bluetooth/USB device enumeration using system_profiler
 impl MacOSNetworkMonitor {
-    /// Enumerate USB devices using system_profiler
-    pub fn enumerate_usb_devices(&self) -> Vec<crate::models::ConnectedDevice> {
+    /// Enumerate USB devices using system_profiler (with recursive hub traversal)
+    fn enumerate_usb_devices_sp(&self) -> Vec<crate::models::ConnectedDevice> {
         let mut devices = Vec::new();
         
         let output = match std::process::Command::new("system_profiler")
@@ -752,24 +753,7 @@ impl MacOSNetworkMonitor {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
             if let Some(items) = json.get("SPUSBDataType").and_then(|v| v.as_array()) {
                 for item in items {
-                    let name = item.get("_name").and_then(|v| v.as_str()).unwrap_or("Unknown USB Device").to_string();
-                    let vendor = item.get("_vendor").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let product_id = item.get("product_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let vendor_id = item.get("vendor_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let serial = item.get("serial_num").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    
-                    devices.push(crate::models::ConnectedDevice {
-                        id: format!("usb:{}", vendor_id.as_deref().unwrap_or("unknown")),
-                        name,
-                        device_type: crate::models::DeviceType::Usb,
-                        vendor,
-                        product_id,
-                        vendor_id,
-                        serial_number: serial,
-                        connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
-                        last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
-                        is_connected: true,
-                    });
+                    Self::extract_usb_from_json_item(&item, &mut devices);
                 }
             }
         }
@@ -777,7 +761,120 @@ impl MacOSNetworkMonitor {
         devices
     }
 
+    /// Recursively extract USB devices from JSON items (handles USB hubs with _items)
+    fn extract_usb_from_json_item(item: &serde_json::Value, devices: &mut Vec<crate::models::ConnectedDevice>) {
+        let name = item.get("_name").and_then(|v| v.as_str()).unwrap_or("Unknown USB Device").to_string();
+        let vendor = item.get("_vendor").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let product_id = item.get("product_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let vendor_id = item.get("vendor_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let serial = item.get("serial_num").and_then(|v| v.as_str()).map(|s| s.to_string());
+        
+        // Only add leaf devices (those with a vendor_id or product_id, or that aren't hubs/controllers)
+        let is_hub = name.to_lowercase().contains("hub") || vendor_id.is_none();
+        
+        if !is_hub || vendor_id.is_some() {
+            devices.push(crate::models::ConnectedDevice {
+                id: format!("usb:{}:{}", vendor_id.as_deref().unwrap_or("unknown"), product_id.as_deref().unwrap_or("unknown")),
+                name,
+                device_type: crate::models::DeviceType::Usb,
+                vendor,
+                product_id,
+                vendor_id,
+                serial_number: serial,
+                connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                is_connected: true,
+            });
+        }
+        
+        // Recurse into _items (devices connected through hubs)
+        if let Some(sub_items) = item.get("_items").and_then(|v| v.as_array()) {
+            for sub in sub_items {
+                Self::extract_usb_from_json_item(sub, devices);
+            }
+        }
+    }
+
+    /// Enumerate USB devices using ioreg (fallback when system_profiler returns empty)
+    fn enumerate_usb_devices_ioreg(&self) -> Vec<crate::models::ConnectedDevice> {
+        let mut devices = Vec::new();
+        
+        let output = match std::process::Command::new("ioreg")
+            .args(["-r", "-c", "IOUSBDevice", "-a"])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return devices,
+        };
+        
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Parse ioreg output for USB device entries
+        // Format: "IOUSBDevice" with properties like "USB Product Name", "idVendor", "idProduct"
+        let mut current_name = String::new();
+        let mut current_vendor_id: Option<String> = None;
+        let mut current_product_id: Option<String> = None;
+        let mut current_serial: Option<String> = None;
+        
+        for line in stdout.lines() {
+            let line = line.trim();
+            if line.contains("\"USB Product Name\"") {
+                if let Some(start) = line.find('=') {
+                    let val = line[start+1..].trim().trim_matches('"');
+                    if !val.is_empty() && val != "0" {
+                        current_name = val.to_string();
+                    }
+                }
+            } else if line.contains("\"idVendor\"") {
+                if let Some(start) = line.find('=') {
+                    current_vendor_id = Some(line[start+1..].trim().trim_matches('"').to_string());
+                }
+            } else if line.contains("\"idProduct\"") {
+                if let Some(start) = line.find('=') {
+                    current_product_id = Some(line[start+1..].trim().trim_matches('"').to_string());
+                }
+            } else if line.contains("\"USB Serial Number\"") {
+                if let Some(start) = line.find('=') {
+                    current_serial = Some(line[start+1..].trim().trim_matches('"').to_string());
+                }
+} else if line.contains("IOUSBDevice") && !current_name.is_empty() {
+                // End of a device entry, save it
+                if let (Some(vid), Some(pid)) = (&current_vendor_id, &current_product_id) {
+                    devices.push(crate::models::ConnectedDevice {
+                        id: format!("usb:{}:{}", vid, pid),
+                        name: current_name.clone(),
+                        device_type: crate::models::DeviceType::Usb,
+                        vendor: None,
+                        product_id: Some(pid.clone()),
+                        vendor_id: Some(vid.clone()),
+                        serial_number: current_serial.clone(),
+                        connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        is_connected: true,
+                    });
+                }
+                current_name.clear();
+                current_vendor_id = None;
+                current_product_id = None;
+                current_serial = None;
+            }
+        }
+        
+        devices
+    }
+
+    /// Enumerate USB devices — tries system_profiler first, falls back to ioreg
+    pub fn enumerate_usb_devices(&self) -> Vec<crate::models::ConnectedDevice> {
+        let devices = self.enumerate_usb_devices_sp();
+        if devices.is_empty() {
+            self.enumerate_usb_devices_ioreg()
+        } else {
+            devices
+        }
+    }
+
     /// Enumerate Bluetooth devices using system_profiler
+    /// Devices are listed as {"Device Name": {properties}} under device_connected and device_not_connected
+    /// BLE devices are detected via device_services containing "BLE"
     pub fn enumerate_bluetooth_devices(&self) -> Vec<crate::models::ConnectedDevice> {
         let mut devices = Vec::new();
         
@@ -793,27 +890,68 @@ impl MacOSNetworkMonitor {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
             if let Some(items) = json.get("SPBluetoothDataType").and_then(|v| v.as_array()) {
                 for item in items {
-                    let name = item.get("_name").and_then(|v| v.as_str()).unwrap_or("Unknown Bluetooth Device").to_string();
-                    let address = item.get("device_address").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let connected = item.get("device_connected").and_then(|v| v.as_bool()).unwrap_or(false);
-                    
-                    devices.push(crate::models::ConnectedDevice {
-                        id: format!("bt:{}", address.as_deref().unwrap_or("unknown")),
-                        name,
-                        device_type: crate::models::DeviceType::Bluetooth,
-                        vendor: None,
-                        product_id: None,
-                        vendor_id: None,
-                        serial_number: address,
-                        connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
-                        last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
-                        is_connected: connected,
-                    });
+                    // Process connected devices
+                    Self::extract_bluetooth_devices_from_list(
+                        item.get("device_connected").and_then(|v| v.as_array()),
+                        true,
+                        &mut devices,
+                    );
+                    // Process not-connected devices (for history)
+                    Self::extract_bluetooth_devices_from_list(
+                        item.get("device_not_connected").and_then(|v| v.as_array()),
+                        false,
+                        &mut devices,
+                    );
                 }
             }
         }
         
         devices
+    }
+
+    /// Extract Bluetooth devices from a list of {"name": {props}} dicts
+    fn extract_bluetooth_devices_from_list(
+        list: Option<&Vec<serde_json::Value>>,
+        is_connected: bool,
+        devices: &mut Vec<crate::models::ConnectedDevice>,
+    ) {
+        if let Some(list) = list {
+            for dev_entry in list {
+                // Each entry is {"Device Name": {properties}}
+                for (dev_name, dev_props) in dev_entry.as_object().unwrap_or(&serde_json::Map::new()) {
+                    let name = dev_name.clone();
+                    let address = dev_props.get("device_address").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let vendor_id = dev_props.get("device_vendorID").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let product_id = dev_props.get("device_productID").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let serial = dev_props.get("device_serialNumber").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    
+                    // Detect BLE via device_services containing "BLE"
+                    let is_ble = dev_props.get("device_services")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.contains("BLE"))
+                        .unwrap_or(false);
+                    
+                    let device_type = if is_ble {
+                        crate::models::DeviceType::BluetoothLe
+                    } else {
+                        crate::models::DeviceType::Bluetooth
+                    };
+                    
+                    devices.push(crate::models::ConnectedDevice {
+                        id: format!("bt:{}", address.as_deref().unwrap_or("unknown")),
+                        name,
+                        device_type,
+                        vendor: None,
+                        product_id,
+                        vendor_id,
+                        serial_number: serial.or_else(|| address.clone()),
+                        connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        is_connected,
+                    });
+                }
+            }
+        }
     }
 
     /// Enumerate all connected devices (USB + Bluetooth)

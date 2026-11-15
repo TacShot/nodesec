@@ -392,6 +392,7 @@ pub struct ThreatAlert {
 pub enum DeviceType {
     Usb,
     Bluetooth,
+    BluetoothLe,
     Thunderbolt,
     FireWire,
     SdCard,
