@@ -1,6 +1,7 @@
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints};
 use crate::state::{ConnectionItem, ThreatLevel, ConnectionStats, ProcessTreeItem, FilterSettings};
+use nodesec_core::models::{ExclusionList, ExclusionRule};
 use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
 

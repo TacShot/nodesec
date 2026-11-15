@@ -1,11 +1,11 @@
 //! macOS network monitoring using libproc and NetworkExtension
 
-use crate::models::{MonitorMode, NetworkProtocol, Platform};
+use crate::models::{MonitorMode, NetworkProtocol, Platform, ExclusionList};
 use crate::network::common::{NetworkConnection, NetworkMonitor};
 use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::net::IpAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
@@ -19,9 +19,20 @@ struct ProcessInfo {
     user: Option<String>,
 }
 
+/// Process information from `ps` enumeration (no root required)
+#[derive(Clone, Debug)]
+struct PsProcess {
+    pid: u32,
+    process_name: String,
+    process_path: Option<String>,
+    command_line: Option<String>,
+    user: Option<String>,
+}
+
 pub struct MacOSNetworkMonitor {
     events: Arc<Mutex<VecDeque<NetworkConnection>>>,
     running: Arc<Mutex<bool>>,
+    exclusion_list: Arc<StdMutex<ExclusionList>>,
 }
 
 impl MacOSNetworkMonitor {
@@ -29,6 +40,7 @@ impl MacOSNetworkMonitor {
         Self {
             events: Arc::new(Mutex::new(VecDeque::with_capacity(10000))),
             running: Arc::new(Mutex::new(false)),
+            exclusion_list: Arc::new(StdMutex::new(ExclusionList::default())),
         }
     }
 
@@ -119,17 +131,25 @@ impl MacOSNetworkMonitor {
     }
 
     /// Run lsof once and build a map of (ip, port) -> process info for all connections.
-    /// This avoids spawning lsof once per connection (which is slow and requires root).
+    /// Also enriches with `ps ax` data for processes that lsof couldn't fully resolve.
     async fn get_all_process_info(&self) -> std::collections::HashMap<(u32, u16), ProcessInfo> {
         let mut map: std::collections::HashMap<(u32, u16), ProcessInfo> = std::collections::HashMap::new();
 
+        // Enumerate all processes via ps (no root required)
+        let ps_map = self.enumerate_all_processes();
+
+        // Run lsof to get connections -> PID mapping
         let output = match tokio::process::Command::new("lsof")
             .args(["-nP", "-i"])
             .output()
             .await
         {
             Ok(o) => o,
-            Err(_) => return map, // lsof not available or no permissions
+            Err(_) => {
+                // lsof not available — fall back to ps-only data with port 0
+                // (we can't map connections to PIDs without lsof, but we still have process list)
+                return map;
+            }
         };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -147,13 +167,26 @@ impl MacOSNetworkMonitor {
             let user = parts[2].to_string();
 
             // lsof -i output: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
-            // NAME column looks like: "tcp4->ip:port" or "udp4->ip:port" or "tcp4@ip:port" or "ip:port"
-            // Find the last column (NAME) which may contain spaces — join remaining parts
             let name = parts[9..].join(" ");
 
             // Parse local and remote addresses from NAME field
-            // Formats: "tcp4->192.168.1.1:80" or "udp4->[::1]:50789" or "tcp4@*:50789"
-            if let Some(process_info) = self.parse_lsof_name(&name, pid, &process_name, &user) {
+            if let Some(mut process_info) = self.parse_lsof_name(&name, pid, &process_name, &user) {
+                // Enrich with ps data if available (better path, command line, user)
+                if let Some(ps_proc) = ps_map.get(&pid) {
+                    if process_info.process_path.is_none() {
+                        process_info.process_path = ps_proc.process_path.clone();
+                    }
+                    if process_info.command_line.is_none() {
+                        process_info.command_line = ps_proc.command_line.clone();
+                    }
+                    if process_info.user.is_none() {
+                        process_info.user = ps_proc.user.clone();
+                    }
+                    // Use ps process_name if lsof name is generic/empty
+                    if process_info.process_name.is_empty() || process_info.process_name == "unknown" {
+                        process_info.process_name = ps_proc.process_name.clone();
+                    }
+                }
                 map.insert((process_info.pid, process_info.src_port), process_info);
             }
         }
@@ -220,6 +253,73 @@ impl MacOSNetworkMonitor {
             Some((path, cmd)) => (path, cmd),
             None => (None, None),
         }
+    }
+
+    /// Enumerate all processes via `ps ax` (no root required for own processes).
+    /// Returns a map of PID -> PsProcess for all processes visible to this user.
+    fn enumerate_all_processes(&self) -> std::collections::HashMap<u32, PsProcess> {
+        let mut map: std::collections::HashMap<u32, PsProcess> = std::collections::HashMap::new();
+
+        let output = match std::process::Command::new("ps")
+            .args(["ax", "-o", "pid=,comm=,user=,args="])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return map,
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.splitn(4, char::is_whitespace).collect();
+            if parts.len() < 3 {
+                continue;
+            }
+
+            let pid: u32 = match parts[0].trim().parse() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let process_name = parts[1].trim().to_string();
+            let user = parts[2].trim().to_string();
+            let args = if parts.len() > 3 { Some(parts[3].trim().to_string()) } else { None };
+
+            // Get executable path via lsof -p <pid> (works for own processes without root)
+            let process_path = self.get_process_executable_path_via_lsof(pid);
+
+            map.insert(pid, PsProcess {
+                pid,
+                process_name,
+                process_path,
+                command_line: args,
+                user: Some(user),
+            });
+        }
+
+        map
+    }
+
+    /// Get executable path for a process via `lsof -p <pid>`.
+    /// Works without root for processes owned by the current user.
+    fn get_process_executable_path_via_lsof(&self, pid: u32) -> Option<String> {
+        let output = match std::process::Command::new("lsof")
+            .args(["-p", &pid.to_string(), "-Fn"])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return None,
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // lsof -Fn output: each line starts with 'f' followed by the file path
+        for line in stdout.lines() {
+            if line.starts_with('f') && line.len() > 1 {
+                let path = line[1..].to_string();
+                // The first 'f' line is typically the executable path (text segment)
+                return Some(path);
+            }
+        }
+
+        None
     }
 
     async fn scan_via_netstat_with_lsof(&self, timestamp: u64, lsof_map: &std::collections::HashMap<(u32, u16), ProcessInfo>) -> Result<()> {
@@ -422,6 +522,18 @@ impl NetworkMonitor for MacOSNetworkMonitor {
     fn mode(&self) -> MonitorMode {
         MonitorMode::OnDevice
     }
+
+    fn set_exclusion_list(&mut self, list: Arc<StdMutex<ExclusionList>>) {
+        self.exclusion_list = list;
+    }
+
+    fn is_excluded(&self, conn: &NetworkConnection) -> bool {
+        let exclusion_list = self.exclusion_list.try_lock();
+        match exclusion_list {
+            Ok(list) => list.is_excluded(conn),
+            Err(_) => false,
+        }
+    }
 }
 
 impl MacOSNetworkMonitor {
@@ -441,6 +553,9 @@ impl MacOSNetworkMonitor {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines().skip(2) {
             if let Some(event) = self.parse_netstat_line_blocking_with_lsof(line, timestamp, NetworkProtocol::Tcp, &lsof_map) {
+                if self.is_excluded(&event) {
+                    continue;
+                }
                 self.add_event_blocking(event)?;
             }
         }
@@ -454,6 +569,9 @@ impl MacOSNetworkMonitor {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines().skip(2) {
             if let Some(event) = self.parse_netstat_line_blocking_with_lsof(line, timestamp, NetworkProtocol::Udp, &lsof_map) {
+                if self.is_excluded(&event) {
+                    continue;
+                }
                 self.add_event_blocking(event)?;
             }
         }
@@ -462,8 +580,12 @@ impl MacOSNetworkMonitor {
     }
 
     /// Blocking lsof — run once, build process map
+    /// Also enriches with `ps ax` data for processes that lsof couldn't fully resolve.
     fn get_all_process_info_blocking(&self) -> std::collections::HashMap<(u32, u16), ProcessInfo> {
         let mut map: std::collections::HashMap<(u32, u16), ProcessInfo> = std::collections::HashMap::new();
+
+        // Enumerate all processes via ps (no root required)
+        let ps_map = self.enumerate_all_processes();
 
         let output = match std::process::Command::new("lsof")
             .args(["-nP", "-i"])
@@ -489,7 +611,22 @@ impl MacOSNetworkMonitor {
 
             let name = parts[9..].join(" ");
 
-            if let Some(process_info) = self.parse_lsof_name(&name, pid, &process_name, &user) {
+            if let Some(mut process_info) = self.parse_lsof_name(&name, pid, &process_name, &user) {
+                // Enrich with ps data if available
+                if let Some(ps_proc) = ps_map.get(&pid) {
+                    if process_info.process_path.is_none() {
+                        process_info.process_path = ps_proc.process_path.clone();
+                    }
+                    if process_info.command_line.is_none() {
+                        process_info.command_line = ps_proc.command_line.clone();
+                    }
+                    if process_info.user.is_none() {
+                        process_info.user = ps_proc.user.clone();
+                    }
+                    if process_info.process_name.is_empty() || process_info.process_name == "unknown" {
+                        process_info.process_name = ps_proc.process_name.clone();
+                    }
+                }
                 map.insert((process_info.pid, process_info.src_port), process_info);
             }
         }

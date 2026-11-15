@@ -1,12 +1,12 @@
 //! Linux network monitoring using /proc/net/tcp and netlink sockets
 
-use crate::models::{MonitorMode, NetworkProtocol, Platform};
+use crate::models::{MonitorMode, NetworkProtocol, Platform, ExclusionList};
 use crate::network::common::{NetworkConnection, NetworkMonitor};
 use anyhow::Result;
 use std::collections::VecDeque;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
@@ -15,6 +15,7 @@ pub struct LinuxNetworkMonitor {
     events: Arc<Mutex<VecDeque<NetworkConnection>>>,
     running: Arc<Mutex<bool>>,
     pid_cache: Arc<Mutex<std::collections::HashMap<u32, (u32, String, Option<String>, Option<String>, Option<String>)>>>,
+    exclusion_list: Arc<StdMutex<ExclusionList>>,
 }
 
 impl LinuxNetworkMonitor {
@@ -23,6 +24,7 @@ impl LinuxNetworkMonitor {
             events: Arc::new(Mutex::new(VecDeque::with_capacity(10000))),
             running: Arc::new(Mutex::new(false)),
             pid_cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            exclusion_list: Arc::new(StdMutex::new(ExclusionList::default())),
         }
     }
 
@@ -113,6 +115,9 @@ impl LinuxNetworkMonitor {
         if let Ok(content) = fs::read_to_string("/proc/net/tcp") {
             for line in content.lines().skip(1) {
                 if let Some(event) = self.parse_proc_net_line(line, timestamp, NetworkProtocol::Tcp, false).await? {
+                    if self.is_excluded(&event) {
+                        continue;
+                    }
                     self.add_event(event).await;
                 }
             }
@@ -122,6 +127,9 @@ impl LinuxNetworkMonitor {
         if let Ok(content) = fs::read_to_string("/proc/net/tcp6") {
             for line in content.lines().skip(1) {
                 if let Some(event) = self.parse_proc_net_line(line, timestamp, NetworkProtocol::Tcp, true).await? {
+                    if self.is_excluded(&event) {
+                        continue;
+                    }
                     self.add_event(event).await;
                 }
             }
@@ -135,6 +143,9 @@ impl LinuxNetworkMonitor {
         if let Ok(content) = fs::read_to_string("/proc/net/udp") {
             for line in content.lines().skip(1) {
                 if let Some(event) = self.parse_proc_net_line(line, timestamp, NetworkProtocol::Udp, false).await? {
+                    if self.is_excluded(&event) {
+                        continue;
+                    }
                     self.add_event(event).await;
                 }
             }
@@ -144,6 +155,9 @@ impl LinuxNetworkMonitor {
         if let Ok(content) = fs::read_to_string("/proc/net/udp6") {
             for line in content.lines().skip(1) {
                 if let Some(event) = self.parse_proc_net_line(line, timestamp, NetworkProtocol::Udp, true).await? {
+                    if self.is_excluded(&event) {
+                        continue;
+                    }
                     self.add_event(event).await;
                 }
             }
@@ -368,6 +382,18 @@ impl NetworkMonitor for LinuxNetworkMonitor {
 
     fn mode(&self) -> MonitorMode {
         MonitorMode::OnDevice
+    }
+
+    fn set_exclusion_list(&mut self, list: Arc<StdMutex<ExclusionList>>) {
+        self.exclusion_list = list;
+    }
+
+    fn is_excluded(&self, conn: &NetworkConnection) -> bool {
+        let exclusion_list = self.exclusion_list.try_lock();
+        match exclusion_list {
+            Ok(list) => list.is_excluded(conn),
+            Err(_) => false,
+        }
     }
 }
 

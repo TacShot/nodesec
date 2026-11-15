@@ -1,10 +1,10 @@
 //! Windows network monitoring using GetExtendedTcpTable and ETW
 
-use crate::models::{MonitorMode, Platform};
+use crate::models::{MonitorMode, Platform, ExclusionList};
 use crate::network::common::{NetworkConnection, NetworkMonitor};
 use anyhow::Result;
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
@@ -18,6 +18,7 @@ use windows::Win32::Networking::WinSock::*;
 pub struct WindowsNetworkMonitor {
     events: Arc<Mutex<VecDeque<NetworkConnection>>>,
     running: Arc<Mutex<bool>>,
+    exclusion_list: Arc<StdMutex<ExclusionList>>,
 }
 
 impl WindowsNetworkMonitor {
@@ -25,6 +26,7 @@ impl WindowsNetworkMonitor {
         Self {
             events: Arc::new(Mutex::new(VecDeque::with_capacity(10000))),
             running: Arc::new(Mutex::new(false)),
+            exclusion_list: Arc::new(StdMutex::new(ExclusionList::default())),
         }
     }
 
@@ -529,6 +531,18 @@ impl NetworkMonitor for WindowsNetworkMonitor {
 
     fn mode(&self) -> MonitorMode {
         MonitorMode::OnDevice
+    }
+
+    fn set_exclusion_list(&mut self, list: Arc<StdMutex<ExclusionList>>) {
+        self.exclusion_list = list;
+    }
+
+    fn is_excluded(&self, conn: &NetworkConnection) -> bool {
+        let exclusion_list = self.exclusion_list.try_lock();
+        match exclusion_list {
+            Ok(list) => list.is_excluded(conn),
+            Err(_) => false,
+        }
     }
 }
 

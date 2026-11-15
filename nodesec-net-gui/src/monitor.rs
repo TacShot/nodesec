@@ -37,6 +37,15 @@ pub fn start_monitoring(
             *m = Some(monitor_impl);
         }
 
+        // Set exclusion list on the monitor
+        {
+            let exclusion_list = monitor_state.exclusion_list.clone();
+            let mut m = monitor.lock().await;
+            if let Some(mon) = m.as_mut() {
+                mon.set_exclusion_list(exclusion_list);
+            }
+        }
+
         // Start the monitor
         {
             let mut m = monitor.lock().await;

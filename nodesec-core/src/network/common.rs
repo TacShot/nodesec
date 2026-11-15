@@ -3,13 +3,13 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 
 // Re-export from models
 pub use crate::models::{
     MonitorMode, NetworkConnection, NetworkProtocol, Platform,
-    WSMessage, AgentInfo, RuleSet, ThreatAlert, DetectionRule,
+    WSMessage, AgentInfo, RuleSet, ThreatAlert, DetectionRule, ExclusionList,
 };
 
 #[derive(Debug, Clone)]
@@ -68,5 +68,16 @@ pub trait NetworkMonitor: Send + Sync {
     fn detect_virtual_machine(&self) -> Option<String> {
         let _ = ();
         None
+    }
+
+    /// Set the exclusion list for filtering connections
+    fn set_exclusion_list(&mut self, _list: Arc<StdMutex<ExclusionList>>) {
+        let _ = _list;
+    }
+
+    /// Check if a connection should be excluded
+    fn is_excluded(&self, _conn: &NetworkConnection) -> bool {
+        let _ = _conn;
+        false
     }
 }

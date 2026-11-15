@@ -1,3 +1,4 @@
+use rand::random;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::command_runner::CommandRunner;
@@ -409,4 +410,97 @@ pub struct ConnectedDevice {
     pub connected_at: u64,
     pub last_seen: u64,
     pub is_connected: bool,
+}
+
+
+/// Rule for excluding specific applications from network monitoring.
+/// When a connection matches an exclusion rule, it is not collected or reported.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExclusionRule {
+    pub id: String,
+    pub process_name: Option<String>,
+    pub process_path: Option<String>,
+    pub pid: Option<u32>,
+    pub reason: String,
+    pub enabled: bool,
+    pub created_at: u64,
+}
+
+impl ExclusionRule {
+    pub fn new(process_name: Option<String>, process_path: Option<String>, pid: Option<u32>, reason: String) -> Self {
+        Self {
+            id: format!("excl-{}-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(), 
+                      rand::random::<u32>()),
+            process_name,
+            process_path,
+            pid,
+            reason,
+            enabled: true,
+            created_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+        }
+    }
+
+    /// Check if a NetworkConnection matches this exclusion rule.
+    pub fn matches(&self, conn: &crate::network::common::NetworkConnection) -> bool {
+        if !self.enabled {
+            return false;
+        }
+
+        // Match by PID (exact match)
+        if let Some(pid) = self.pid {
+            if conn.pid == pid {
+                return true;
+            }
+        }
+
+        // Match by process name (case-insensitive contains)
+        if let Some(ref name) = self.process_name {
+            let name_lower = name.to_lowercase();
+            if conn.process_name.to_lowercase().contains(&name_lower) {
+                return true;
+            }
+        }
+
+        // Match by process path (case-insensitive contains)
+        if let Some(ref path) = self.process_path {
+            if let Some(ref conn_path) = conn.process_path {
+                let path_lower = path.to_lowercase();
+                if conn_path.to_lowercase().contains(&path_lower) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+}
+
+/// Collection of exclusion rules with persistence support.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExclusionList {
+    pub rules: Vec<ExclusionRule>,
+}
+
+impl ExclusionList {
+    pub fn add(&mut self, rule: ExclusionRule) {
+        // Remove existing rule with same process_name+process_path+pid combo if exists
+        self.rules.retain(|r| {
+            !(r.process_name == rule.process_name && r.process_path == rule.process_path && r.pid == rule.pid)
+        });
+        self.rules.push(rule);
+    }
+
+    pub fn remove(&mut self, id: &str) {
+        self.rules.retain(|r| r.id != id);
+    }
+
+    pub fn toggle(&mut self, id: &str) {
+        if let Some(rule) = self.rules.iter_mut().find(|r| r.id == id) {
+            rule.enabled = !rule.enabled;
+        }
+    }
+
+    pub fn is_excluded(&self, conn: &crate::network::common::NetworkConnection) -> bool {
+        self.rules.iter().any(|r| r.matches(conn))
+    }
 }

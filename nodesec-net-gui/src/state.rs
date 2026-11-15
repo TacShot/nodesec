@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as TokioMutex;
-use nodesec_core::models::{NetworkConnection, Platform};
+use nodesec_core::models::{ExclusionList, NetworkConnection, Platform};
 use nodesec_core::threat::ThreatDetector;
 use std::collections::VecDeque;
 
@@ -294,6 +294,7 @@ pub struct MonitorState {
     pub threat_detector: Arc<Mutex<ThreatDetector>>,
     pub audit_state: Arc<Mutex<AuditState>>,
     pub connected_devices: Arc<Mutex<Vec<nodesec_core::models::ConnectedDevice>>>,
+    pub exclusion_list: Arc<Mutex<nodesec_core::models::ExclusionList>>,
 }
 
 impl MonitorState {
@@ -311,6 +312,7 @@ impl MonitorState {
             threat_detector: Arc::new(Mutex::new(ThreatDetector::new())),
             audit_state: Arc::new(Mutex::new(AuditState::default())),
             connected_devices: Arc::new(Mutex::new(Vec::new())),
+            exclusion_list: Arc::new(Mutex::new(nodesec_core::models::ExclusionList::default())),
         }
     }
     
