@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use std::collections::VecDeque;
 use tokio::runtime;
 use nodesec_core::models::Platform;
+use nodesec_core::audit::AuditEngine;
 
 mod state;
 mod monitor;
@@ -33,6 +34,8 @@ enum Tab {
     ConnectionGraph,
     Alerts,
     Statistics,
+    Audit,
+    Reports,
     Settings,
 }
 
@@ -45,6 +48,8 @@ impl Tab {
             Tab::ConnectionGraph => "Graph",
             Tab::Alerts => "Alerts",
             Tab::Statistics => "Statistics",
+            Tab::Audit => "Audit",
+            Tab::Reports => "Reports",
             Tab::Settings => "Settings",
         }
     }
@@ -120,8 +125,6 @@ struct App {
     // Graph pan/zoom state
     graph_offset: egui::Vec2,
     graph_zoom: f32,
-    // Mock resolver state for dev mode (when not root)
-    mock_resolver_enabled: bool,
 }
 
 impl App {
@@ -152,7 +155,6 @@ impl App {
             last_proc_sort: Instant::now(),
             graph_offset: egui::Vec2::ZERO,
             graph_zoom: 1.0,
-            mock_resolver_enabled: false,
         }
     }
 
@@ -464,21 +466,6 @@ impl App {
         ui.label(egui::RichText::new("Processes • Click cell for details").color(GRAY).size(11.0));
         ui.separator();
 
-        // Mock resolver toggle (dev mode only)
-        #[cfg(target_os = "macos")]
-        {
-            let is_root = unsafe { libc::geteuid() == 0 };
-            if !is_root {
-                ui.horizontal(|ui| {
-                    if ui.checkbox(&mut self.mock_resolver_enabled, "Show mock PIDs (dev mode)").changed() {
-                        // Mock resolver will be applied on next scan
-                    }
-                    ui.label("Assigns fake PIDs so UI is testable without root");
-                });
-                ui.separator();
-            }
-        }
-
         let connections: Vec<crate::state::ConnectionItem> = self
             .monitor_state
             .connections
@@ -500,15 +487,11 @@ impl App {
         use std::collections::HashMap;
         let mut process_map: HashMap<String, Vec<&crate::state::ConnectionItem>> = HashMap::new();
         for item in &connections {
-            let key = if item.connection.pid == 0 && item.connection.process_name == "unknown" {
-                if self.mock_resolver_enabled {
-                    format!("mock:{}:{}", item.connection.src_port, item.connection.src_port)
-                } else {
-                    format!("unknown:{}", item.connection.src_port)
-                }
-            } else {
-                format!("{}:{}", item.connection.pid, item.connection.process_name)
-            };
+            // Only show processes with real PIDs (root required for lsof)
+            if item.connection.pid == 0 && item.connection.process_name == "unknown" {
+                continue;
+            }
+            let key = format!("{}:{}", item.connection.pid, item.connection.process_name);
             process_map.entry(key).or_default().push(item);
         }
 
@@ -590,15 +573,7 @@ impl App {
                     _ => RED,
                 };
 
-                // Determine PID display
-                let pid_str = if key.starts_with("mock:") {
-                    key.split(':').nth(1).unwrap_or(&"0").to_string()
-                } else if key.starts_with("unknown:") {
-                    "0".to_string()
-                } else {
-                    key.split(':').next().unwrap_or(&"0").to_string()
-                };
-                let pid: u32 = pid_str.parse().unwrap_or(0);
+                let pid: u32 = key.split(':').next().unwrap_or(&"0").parse().unwrap_or(0);
                 let is_selected = self.selected_process == Some(pid);
 
                 // Cell frame
@@ -609,11 +584,7 @@ impl App {
                 let cx = cell_rect.center().x;
                 let ty = cell_rect.top() + 8.0;
 
-                let display_name = if key.starts_with("mock:") || key.starts_with("unknown:") {
-                    format!("mock-{}", key.split(':').nth(1).unwrap_or(&"0"))
-                } else {
-                    key.split(':').nth(1).unwrap_or(&key).to_string()
-                };
+                let display_name = key.split(':').nth(1).unwrap_or(&key).to_string();
 
                 ui.painter().text(
                     egui::pos2(cx, ty),
@@ -718,15 +689,11 @@ impl App {
         use std::collections::HashMap;
         let mut process_cells: HashMap<String, Vec<&crate::state::ConnectionItem>> = HashMap::new();
         for item in &connections {
-            let key = if item.connection.pid == 0 && item.connection.process_name == "unknown" {
-                if self.mock_resolver_enabled {
-                    format!("mock:{}:{}", item.connection.src_port, item.connection.src_port)
-                } else {
-                    format!("unknown:{}", item.connection.src_port)
-                }
-            } else {
-                format!("{}:{}", item.connection.pid, item.connection.process_name)
-            };
+            // Only show processes with real PIDs (root required for lsof)
+            if item.connection.pid == 0 && item.connection.process_name == "unknown" {
+                continue;
+            }
+            let key = format!("{}:{}", item.connection.pid, item.connection.process_name);
             process_cells.entry(key).or_default().push(item);
         }
 
@@ -809,11 +776,7 @@ impl App {
             );
 
             // Draw text using painter (no clipping issues)
-            let display_name = if key.starts_with("unknown") {
-                format!("Unknown (port {})", key.split(':').nth(1).unwrap_or(&"0"))
-            } else {
-                key.split(':').nth(1).unwrap_or(&key).to_string()
-            };
+            let display_name = key.split(':').nth(1).unwrap_or(&key).to_string();
 
             // Name
             ui.painter().text(
@@ -1043,6 +1006,96 @@ impl App {
         });
     }
 
+    fn render_audit(&mut self, ui: &mut egui::Ui) {
+        ui.heading(egui::RichText::new("Security Audit").color(ORANGE));
+        ui.separator();
+
+        ui.label(egui::RichText::new("Static security auditing with CVE enrichment").color(GRAY).size(11.0));
+        ui.separator();
+
+        ui.group(|ui| {
+            ui.heading(egui::RichText::new("Audit Configuration").color(ORANGE));
+            ui.separator();
+
+            ui.horizontal(|ui| {
+                if ui.button("Run Full Audit").clicked() {
+                    // TODO: run audit
+                }
+                ui.add_space(8.0);
+                if ui.button("Scan Applications").clicked() {
+                    // TODO: scan apps
+                }
+                ui.add_space(8.0);
+                if ui.button("Scan AD Security").clicked() {
+                    // TODO: scan AD
+                }
+            });
+
+            ui.separator();
+            ui.label(egui::RichText::new("Compliance Standards:").color(ORANGE).strong());
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut false, "CIS");
+                ui.add_space(8.0);
+                ui.checkbox(&mut false, "NIST");
+                ui.add_space(8.0);
+                ui.checkbox(&mut false, "PCI-DSS");
+            });
+
+            ui.separator();
+            ui.label(egui::RichText::new("NVD CVE Enrichment:").color(ORANGE).strong());
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut false, "Enable NVD lookups");
+                ui.add_space(8.0);
+                ui.label("(requires internet access)");
+            });
+        });
+
+        ui.separator();
+        ui.label(egui::RichText::new("Last Audit Results:").color(ORANGE).strong());
+        ui.label(egui::RichText::new("No audit has been run yet.").color(GRAY));
+    }
+
+    fn render_reports(&mut self, ui: &mut egui::Ui) {
+        ui.heading(egui::RichText::new("Reports").color(ORANGE));
+        ui.separator();
+
+        ui.label(egui::RichText::new("View, export, and manage security reports").color(GRAY).size(11.0));
+        ui.separator();
+
+        ui.group(|ui| {
+            ui.heading(egui::RichText::new("Report Management").color(ORANGE));
+            ui.separator();
+
+            ui.horizontal(|ui| {
+                if ui.button("List Reports").clicked() {
+                    // TODO
+                }
+                ui.add_space(8.0);
+                if ui.button("Export Report").clicked() {
+                    // TODO
+                }
+                ui.add_space(8.0);
+                if ui.button("Delete Report").clicked() {
+                    // TODO
+                }
+            });
+
+            ui.separator();
+            ui.label(egui::RichText::new("Recent Reports:").color(ORANGE).strong());
+            ui.label(egui::RichText::new("No reports found.").color(GRAY));
+        });
+
+        ui.separator();
+        ui.heading(egui::RichText::new("Report Formats:").color(ORANGE).strong());
+        ui.horizontal(|ui| {
+            if ui.button("TXT").clicked() {}
+            ui.add_space(8.0);
+            if ui.button("JSON").clicked() {}
+            ui.add_space(8.0);
+            if ui.button("CSV").clicked() {}
+        });
+    }
+
     fn render_dashboard_summary(&mut self, ui: &mut egui::Ui) {
         let stats = self.monitor_state.stats.lock().unwrap();
         let connections = self.monitor_state.connections.lock().unwrap();
@@ -1245,7 +1298,8 @@ impl eframe::App for App {
                 ui.add_space(10.0);
                 for tab in [
                     Tab::Dashboard, Tab::Connections, Tab::ProcessTree,
-                    Tab::ConnectionGraph, Tab::Alerts, Tab::Statistics, Tab::Settings
+                    Tab::ConnectionGraph, Tab::Alerts, Tab::Statistics,
+                    Tab::Audit, Tab::Reports, Tab::Settings
                 ] {
                     let selected = self.selected_tab == tab;
                     if ui.selectable_label(selected, tab.label()).clicked() {
@@ -1292,6 +1346,8 @@ impl eframe::App for App {
                 Tab::ConnectionGraph => self.render_connection_graph(ui),
                 Tab::Alerts => self.render_alerts(ui),
                 Tab::Statistics => self.render_statistics(ui),
+                Tab::Audit => self.render_audit(ui),
+                Tab::Reports => self.render_reports(ui),
                 Tab::Settings => self.render_settings(ui),
             }
         });
@@ -1347,7 +1403,6 @@ pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
             last_proc_sort: Instant::now(),
             graph_offset: egui::Vec2::ZERO,
             graph_zoom: 1.0,
-            mock_resolver_enabled: false,
         };
 
         eframe::run_native(
