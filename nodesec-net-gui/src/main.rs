@@ -431,6 +431,20 @@ impl App {
         ui.heading(egui::RichText::new("Connection Processes").color(ORANGE));
         ui.separator();
 
+        // Root privilege warning (macOS)
+        #[cfg(target_os = "macos")]
+        {
+            let is_root = unsafe { libc::geteuid() == 0 };
+            if !is_root {
+                ui.group(|ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.colored_label(RED, egui::RichText::new("[!] Process names require root privileges").strong());
+                    ui.label("Click \"Request Root\" in the header to enable PID/process name resolution via lsof.");
+                });
+                ui.separator();
+            }
+        }
+
         ui.label(egui::RichText::new("Central hub = all connections • Branches = processes • Click process for details").color(GRAY).size(11.0));
         ui.separator();
 
@@ -1109,6 +1123,24 @@ impl eframe::App for App {
                     };
                     if ui.button(details_text).clicked() {
                         self.show_details_pane = !self.show_details_pane;
+                    }
+                    ui.add_space(8.0);
+
+                    // Root privilege indicator and request button (macOS only)
+                    #[cfg(target_os = "macos")]
+                    {
+                        let is_root = unsafe { libc::geteuid() == 0 };
+                        let root_text = if is_root {
+                            "[Root: ON]".to_string()
+                        } else {
+                            "[Root: OFF]".to_string()
+                        };
+                        let root_color = if is_root { GREEN } else { RED };
+                        ui.colored_label(root_color, root_text);
+                        ui.add_space(4.0);
+                        if !is_root && ui.button("Request Root").clicked() {
+                            ensure_root_privileges();
+                        }
                     }
                     ui.add_space(8.0);
                     if ui.button("Quit").clicked() {
