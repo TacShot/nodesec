@@ -426,137 +426,122 @@ impl App {
     }
 
     fn render_process_tree(&mut self, ui: &mut egui::Ui) {
-        let connections = self.monitor_state.connections.lock().unwrap();
-        let mut processes: Vec<crate::state::ProcessTreeItem> = crate::state::ProcessTreeItem::from_connections(&connections);
+        // Hub-and-spoke process tree (like image 4)
+        // Central hub at bottom, processes branch up with colored lines
+        ui.heading(egui::RichText::new("Connection Processes").color(ORANGE));
+        ui.separator();
 
-        if processes.is_empty() {
-            let conn_count = connections.len();
-            if conn_count > 0 {
-                ui.centered_and_justified(|ui| {
-                    ui.label(egui::RichText::new(format!("{} connections captured but no process info available (PID resolution may require elevated privileges)", conn_count)).color(GRAY));
-                });
-            } else {
-                ui.centered_and_justified(|ui| {
-                    ui.label(egui::RichText::new("No processes with network connections").color(GRAY));
-                });
-            }
+        ui.label(egui::RichText::new("Central hub = all connections • Branches = processes • Click process for details").color(GRAY).size(11.0));
+        ui.separator();
+
+        let connections: Vec<crate::state::ConnectionItem> = self
+            .monitor_state
+            .connections
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|item| self.filter.matches(item))
+            .cloned()
+            .collect();
+
+        if connections.is_empty() {
+            ui.centered_and_justified(|ui| {
+                ui.label(egui::RichText::new("No connections captured yet. Start monitoring to see connections.").color(GRAY));
+            });
             return;
         }
 
-        // Apply filter
-        processes.retain(|proc| {
-            let mut matches = true;
-            if !self.filter.process_name.is_empty() {
-                if !proc.name.to_lowercase().contains(&self.filter.process_name.to_lowercase()) {
-                    matches = false;
-                }
-            }
-            if let Some(pid) = self.filter.pid {
-                if proc.pid != pid {
-                    matches = false;
-                }
-            }
-            if self.filter.only_suspicious && !proc.is_suspicious {
-                matches = false;
-            }
-            if proc.total_threat_score < self.filter.min_threat_score || proc.total_threat_score > self.filter.max_threat_score {
-                matches = false;
-            }
-            matches
-        });
-
-        // Sort processes
-        processes.sort_by(|a, b| {
-            let ordering = match self.proc_sort_field {
-                SortField::Process => a.name.cmp(&b.name),
-                SortField::Pid => a.pid.cmp(&b.pid),
-                SortField::Connections => a.connections.len().cmp(&b.connections.len()),
-                SortField::ThreatScore => a.total_threat_score.cmp(&b.total_threat_score),
-                SortField::Status => a.is_suspicious.cmp(&b.is_suspicious).reverse(), // suspicious first
-                _ => a.name.cmp(&b.name),
+        // Group by process
+        use std::collections::HashMap;
+        let mut process_map: HashMap<String, Vec<&crate::state::ConnectionItem>> = HashMap::new();
+        for item in &connections {
+            let key = if item.connection.pid == 0 && item.connection.process_name == "unknown" {
+                format!("unknown:{}", item.connection.src_port)
+            } else {
+                format!("{}:{}", item.connection.pid, item.connection.process_name)
             };
-            match self.proc_sort_dir {
-                SortDir::Asc => ordering,
-                SortDir::Desc => ordering.reverse(),
-            }
-        });
+            process_map.entry(key).or_default().push(item);
+        }
 
-        ui.heading(egui::RichText::new("Process Network Tree").color(ORANGE));
-        ui.separator();
+        let mut processes: Vec<(String, Vec<&crate::state::ConnectionItem>, u8)> = process_map
+            .into_iter()
+            .map(|(key, conns)| {
+                let max_threat = conns.iter().map(|c| c.connection.threat_score).max().unwrap_or(0);
+                (key, conns, max_threat)
+            })
+            .collect();
 
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Click row to select").color(GRAY).size(11.0));
-        });
-        ui.separator();
+        // Sort by threat score descending
+        processes.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            // Sortable header row — click to toggle sort
-            ui.horizontal(|ui| {
-                ui.add_space(2.0);
+        let available = ui.available_rect_before_wrap();
+        let hub_y = available.bottom() - 60.0;
+        let hub_x = available.min.x + available.width() / 2.0;
 
-                // Sel column
-                if ui.small_button("Sel").clicked() {
-                    // No sort for selection column
-                }
-                ui.add_space(8.0);
+        // Cell dimensions
+        let cell_width = 180.0;
+        let cell_height = 70.0;
+        let cell_spacing = 20.0;
+        let num_procs = processes.len();
+        let total_width = num_procs as f32 * (cell_width + cell_spacing);
+        let start_x = hub_x - total_width / 2.0;
 
-                // Process
-                if self.proc_sort_field == SortField::Process {
-                    ui.label(egui::RichText::new(format!("Process {}", self.proc_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Process").clicked() {
-                    self.proc_sort_field = SortField::Process;
-                    self.proc_sort_dir = SortDir::Asc;
-                }
-                ui.add_space(16.0);
+        // Draw branch lines from hub to each process cell (behind cells)
+        for (i, (_, _, threat_score)) in processes.iter().enumerate() {
+            let cell_x = start_x + i as f32 * (cell_width + cell_spacing) + cell_width / 2.0;
+            let cell_y = available.top() + cell_spacing;
+            let threat_color = match *threat_score {
+                0..=25 => GREEN,
+                26..=49 => YELLOW,
+                50..=74 => ORANGE,
+                75..=89 => egui::Color32::from_rgb(255, 100, 100),
+                _ => RED,
+            };
 
-                // PID
-                if self.proc_sort_field == SortField::Pid {
-                    ui.label(egui::RichText::new(format!("PID {}", self.proc_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("PID").clicked() {
-                    self.proc_sort_field = SortField::Pid;
-                    self.proc_sort_dir = SortDir::Asc;
-                }
-                ui.add_space(16.0);
+            // Vertical-ish line from hub to cell
+            ui.painter().line_segment(
+                [
+                    egui::pos2(hub_x, hub_y),
+                    egui::pos2(cell_x, cell_y + cell_height / 2.0),
+                ],
+                egui::Stroke::new(2.0, threat_color),
+            );
 
-                // User
-                if self.proc_sort_field == SortField::User {
-                    ui.label(egui::RichText::new(format!("User {}", self.proc_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("User").clicked() {
-                    self.proc_sort_field = SortField::User;
-                    self.proc_sort_dir = SortDir::Asc;
-                }
-                ui.add_space(16.0);
+            // Dot at top of branch
+            ui.painter().circle_filled(
+                egui::pos2(cell_x, cell_y + cell_height / 2.0),
+                4.0,
+                threat_color,
+            );
+        }
 
-                // Connections
-                if self.proc_sort_field == SortField::Connections {
-                    ui.label(egui::RichText::new(format!("Connections {}", self.proc_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Connections").clicked() {
-                    self.proc_sort_field = SortField::Connections;
-                    self.proc_sort_dir = SortDir::Asc;
-                }
-                ui.add_space(16.0);
+        // Draw hub at bottom center
+        let hub_rect = egui::Rect::from_center_size(
+            egui::pos2(hub_x, hub_y),
+            egui::vec2(180.0, 40.0),
+        );
+        ui.painter().rect_filled(hub_rect, 8.0, egui::Color32::from_rgb(60, 60, 60));
+        ui.painter().rect_stroke(hub_rect, 8.0, egui::Stroke::new(2.0, ORANGE));
+        ui.painter().text(
+            hub_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "All Connections",
+            egui::FontId::new(14.0, egui::FontFamily::Proportional),
+            WHITE,
+        );
 
-                // Max Threat
-                if self.proc_sort_field == SortField::ThreatScore {
-                    ui.label(egui::RichText::new(format!("Max Threat {}", self.proc_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Max Threat").clicked() {
-                    self.proc_sort_field = SortField::ThreatScore;
-                    self.proc_sort_dir = SortDir::Asc;
-                }
-                ui.add_space(16.0);
+        // Draw process cells in a horizontal scrollable row
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            ui.set_min_size(egui::vec2(total_width + cell_spacing * 2.0, available.height() - 80.0));
 
-                // Status
-                if self.proc_sort_field == SortField::Status {
-                    ui.label(egui::RichText::new(format!("Status {}", self.proc_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Status").clicked() {
-                    self.proc_sort_field = SortField::Status;
-                    self.proc_sort_dir = SortDir::Asc;
-                }
-            });
-            ui.separator();
+            for (i, (key, conns, threat_score)) in processes.iter().enumerate() {
+                let cell_x = start_x + i as f32 * (cell_width + cell_spacing);
+                let cell_rect = egui::Rect::from_min_size(
+                    egui::pos2(cell_x, available.top() + cell_spacing),
+                    egui::vec2(cell_width, cell_height),
+                );
 
-            for proc in processes {
-                let threat_color = match proc.total_threat_score {
+                let threat_color = match *threat_score {
                     0..=25 => GREEN,
                     26..=49 => YELLOW,
                     50..=74 => ORANGE,
@@ -564,111 +549,82 @@ impl App {
                     _ => RED,
                 };
 
-                let selected_proc = self.selected_process;
-                let is_selected = selected_proc == Some(proc.pid);
+                let pid: u32 = key.split(':').next().unwrap_or(&"0").parse().unwrap_or(0);
+                let is_selected = self.selected_process == Some(pid);
 
-                let process_display = if proc.name.is_empty() {
-                    "unknown".to_string()
-                } else {
-                    proc.name.clone()
-                };
+                // Cell frame
+                ui.painter().rect_filled(
+                    cell_rect,
+                    6.0,
+                    egui::Color32::from_rgb(40, 40, 40),
+                );
+                ui.painter().rect_stroke(
+                    cell_rect,
+                    6.0,
+                    egui::Stroke::new(2.0, if is_selected { WHITE } else { threat_color }),
+                );
 
-                let bg_color = if is_selected {
-                    egui::Color32::from_rgb(60, 60, 60)
-                } else {
-                    DARK_BG
-                };
-
-                egui::Frame::none()
-                    .fill(bg_color)
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(40, 40, 40)))
-                    .inner_margin(4.0)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.add_space(2.0);
-
-                            let btn_text = if is_selected { "[Selected]" } else { "[Select]" };
-                            if ui.small_button(btn_text).clicked() {
-                                self.selected_process = Some(proc.pid);
-                                self.details_selected_pid = Some(proc.pid);
-                                self.details_selected_tab = Tab::ProcessTree;
-                            }
-                            ui.add_space(8.0);
-
-                            ui.label(&process_display);
-                            ui.add_space(16.0);
-                            ui.label(proc.pid.to_string());
-                            ui.add_space(16.0);
-                            ui.label(proc.user.as_deref().unwrap_or("N/A"));
-                            ui.add_space(16.0);
-                            ui.label(proc.connections.len().to_string());
-                            ui.add_space(16.0);
-                            ui.colored_label(threat_color, proc.total_threat_score.to_string());
-                            ui.add_space(16.0);
-                            ui.colored_label(threat_color, if proc.is_suspicious { "SUSPICIOUS" } else { "OK" });
-                        });
-                    });
-
-                ui.add_space(1.0);
-                ui.separator();
-                ui.add_space(1.0);
-
-                // Show connection details inline for selected process
-                if is_selected {
-                    ui.add_space(4.0);
-                    if let Some(path) = &proc.path {
-                        ui.label(egui::RichText::new(format!("Path: {}", path)).color(GRAY).size(11.0));
-                    }
-                    if let Some(user) = &proc.user {
-                        ui.label(egui::RichText::new(format!("User: {}", user)).color(GRAY).size(11.0));
-                    }
-                    ui.separator();
-                    ui.label(egui::RichText::new("Network Connections:").color(WHITE).strong().size(11.0));
-
-                    // Connection details using horizontal rows (NOT Grid)
-                    if proc.connections.is_empty() {
-                        ui.label(egui::RichText::new("  No network connections").color(GRAY).size(11.0));
+                // Cell content
+                let old_clip = ui.clip_rect();
+                ui.set_clip_rect(cell_rect.shrink(8.0));
+                ui.vertical(|ui| {
+                    ui.add_space(2.0);
+                    let display_name = if key.starts_with("unknown") {
+                        format!("Unknown (port {})", key.split(':').nth(1).unwrap_or(&"0"))
                     } else {
-                        // Header for connection details
-                        ui.horizontal(|ui| {
-                            ui.add_space(8.0);
-                            ui.label(egui::RichText::new("Protocol").color(ORANGE).strong().size(11.0));
-                            ui.add_space(16.0);
-                            ui.label(egui::RichText::new("Source").color(ORANGE).strong().size(11.0));
-                            ui.add_space(16.0);
-                            ui.label(egui::RichText::new("Destination").color(ORANGE).strong().size(11.0));
-                            ui.add_space(16.0);
-                            ui.label(egui::RichText::new("Threat").color(ORANGE).strong().size(11.0));
-                        });
+                        key.split(':').nth(1).unwrap_or(&key).to_string()
+                    };
+                    ui.label(egui::RichText::new(&display_name).color(WHITE).size(11.0).strong());
+                    ui.add_space(1.0);
+                    ui.label(egui::RichText::new(format!("PID: {}", pid)).color(GRAY).size(9.0));
+                    ui.add_space(1.0);
+                    ui.label(egui::RichText::new(format!("{} connections", conns.len())).color(ORANGE).size(9.0));
+                    ui.add_space(1.0);
+                    ui.colored_label(threat_color, egui::RichText::new(format!("Threat: {}", threat_score)).size(9.0));
+                });
+                ui.set_clip_rect(old_clip);
 
-                        for conn in &proc.connections {
-                            let proto = format!("{:?}", conn.protocol);
-                            let src = format!("{}:{}", conn.src_ip, conn.src_port);
-                            let dst = format!("{}:{}", conn.dst_ip, conn.dst_port);
-                            let conn_threat_color = match conn.threat_score {
-                                0..=25 => GREEN,
-                                26..=49 => YELLOW,
-                                50..=74 => ORANGE,
-                                75..=89 => egui::Color32::from_rgb(255, 100, 100),
-                                _ => RED,
-                            };
-
-                            ui.horizontal(|ui| {
-                                ui.add_space(8.0);
-                                ui.label(egui::RichText::new(proto).size(11.0));
-                                ui.add_space(16.0);
-                                ui.label(egui::RichText::new(src).size(11.0));
-                                ui.add_space(16.0);
-                                ui.label(egui::RichText::new(dst).size(11.0));
-                                ui.add_space(16.0);
-                                ui.colored_label(conn_threat_color, egui::RichText::new(conn.threat_score.to_string()).size(11.0));
-                            });
-                        }
-                    }
-                    ui.add_space(8.0);
+                // Clickable overlay
+                let response = ui.interact(
+                    cell_rect,
+                    ui.id().with(format!("proc_btn_{}", i)),
+                    egui::Sense::click(),
+                );
+                if response.clicked() {
+                    self.selected_process = Some(pid);
+                    self.details_selected_pid = Some(pid);
+                    self.details_selected_tab = Tab::ProcessTree;
                 }
             }
         });
+
+        // Details panel for selected process (bottom section)
+        if let Some(pid) = self.selected_process {
+            let all_conns: Vec<crate::state::ConnectionItem> = self
+                .monitor_state
+                .connections
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|item| item.connection.pid == pid)
+                .cloned()
+                .collect();
+
+            if let Some(proc_item) = all_conns.first() {
+                ui.separator();
+                let proc = crate::state::ProcessTreeItem {
+                    pid,
+                    name: proc_item.connection.process_name.clone(),
+                    path: proc_item.connection.process_path.clone(),
+                    user: proc_item.connection.user.clone(),
+                    connections: all_conns.iter().map(|c| c.connection.clone()).collect(),
+                    children: Vec::new(),
+                    total_threat_score: proc_item.connection.threat_score,
+                    is_suspicious: proc_item.connection.is_suspicious,
+                };
+                self.render_process_detail(ui, &proc);
+            }
+        }
     }
 
     fn render_connection_graph(&mut self, ui: &mut egui::Ui) {
