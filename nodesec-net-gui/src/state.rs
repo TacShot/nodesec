@@ -33,6 +33,16 @@ impl ThreatLevel {
             ThreatLevel::Critical => "CRIT",
         }
     }
+
+    pub fn from_score(score: u8) -> Self {
+        match score {
+            0..=25 => ThreatLevel::Safe,
+            26..=49 => ThreatLevel::Low,
+            50..=74 => ThreatLevel::Medium,
+            75..=89 => ThreatLevel::High,
+            _ => ThreatLevel::Critical,
+        }
+    }
 }
 
 pub fn threat_level_from_score(score: u8) -> ThreatLevel {
@@ -214,6 +224,7 @@ pub struct AlertEntry {
 pub struct IgnoreRule {
     pub id: String,
     pub process_name: Option<String>,
+    pub process_path: Option<String>,
     pub pid: Option<u32>,
     pub port: Option<u16>,
     pub ip: Option<String>,
@@ -226,6 +237,12 @@ impl IgnoreRule {
     pub fn matches(&self, conn: &NetworkConnection) -> bool {
         if let Some(name) = &self.process_name {
             if !conn.process_name.contains(name) {
+                return false;
+            }
+        }
+        if let Some(path) = &self.process_path {
+            let conn_path = conn.process_path.as_deref().unwrap_or("");
+            if !conn_path.contains(path) {
                 return false;
             }
         }

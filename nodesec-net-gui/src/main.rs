@@ -106,14 +106,14 @@ struct App {
     connection_history: Arc<Mutex<VecDeque<(f64, usize)>>>,
     threat_history: Arc<Mutex<VecDeque<(f64, u8)>>>,
     // Selections
-    selected_connection: Option<usize>,
+    selected_connection_id: Option<String>,
     selected_process: Option<u32>,
     selected_graph_node: Option<String>,
     graph: ConnectionGraph,
     filter: FilterSettings,
     // Details pane - separate state so it persists across tab switches
     details_selected_tab: Tab,
-    details_selected_index: Option<usize>,
+    details_selected_conn: Option<nodesec_core::models::NetworkConnection>,
     details_selected_pid: Option<u32>,
     details_selected_node: Option<String>,
     // Details pane visibility
@@ -141,13 +141,13 @@ impl App {
             monitoring: false,
             connection_history: Arc::new(Mutex::new(VecDeque::with_capacity(300))),
             threat_history: Arc::new(Mutex::new(VecDeque::with_capacity(300))),
-            selected_connection: None,
+            selected_connection_id: None,
             selected_process: None,
             selected_graph_node: None,
             graph: ConnectionGraph::new(monitor_state_for_graph),
             filter: FilterSettings::default(),
             details_selected_tab: Tab::Dashboard,
-            details_selected_index: None,
+            details_selected_conn: None,
             details_selected_pid: None,
             details_selected_node: None,
             show_details_pane: true,
@@ -236,8 +236,8 @@ impl App {
                 self.monitor_state.alerts.lock().unwrap().clear();
                 self.connection_history.lock().unwrap().clear();
                 self.threat_history.lock().unwrap().clear();
-                self.selected_connection = None;
-                self.details_selected_index = None;
+                self.selected_connection_id = None;
+                self.details_selected_conn = None;
             }
 
             ui.separator();
@@ -371,7 +371,7 @@ impl App {
 
             // Data rows using horizontal layout (NOT Grid — Grid crashes with interactive widgets)
             // Wrap each row in a Frame for visual separation
-            for (i, item) in connections.iter().enumerate() {
+            for item in &connections {
                 let conn = &item.connection;
                 let threat_color = item.threat_level.color();
 
@@ -382,8 +382,9 @@ impl App {
                     .map(|dt| dt.format("%H:%M:%S").to_string())
                     .unwrap_or_default();
 
-                let selected_conn = self.selected_connection;
-                let is_selected = selected_conn == Some(i);
+                // Stable connection ID for widget IDs
+                let conn_id = format!("{}:{}->{}:{}", conn.src_ip, conn.src_port, conn.dst_ip, conn.dst_port);
+                let is_selected = self.selected_connection_id.as_ref() == Some(&conn_id);
 
                 let display_name = if conn.process_name.is_empty() {
                     "unknown".to_string()
@@ -402,33 +403,35 @@ impl App {
                     .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(40, 40, 40)))
                     .inner_margin(4.0)
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.add_space(2.0);
+                        ui.push_id(&conn_id, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.add_space(2.0);
 
-                            // Select button — full row selection
-                            let btn_text = if is_selected { "[Selected]" } else { "[Select]" };
-                            if ui.small_button(btn_text).clicked() {
-                                self.selected_connection = Some(i);
-                                self.details_selected_index = Some(i);
-                                self.details_selected_tab = Tab::Connections;
-                            }
-                            ui.add_space(8.0);
+                                // Select button — full row selection
+                                let btn_text = if is_selected { "[Selected]" } else { "[Select]" };
+                                if ui.small_button(btn_text).clicked() {
+                                    self.selected_connection_id = Some(conn_id.clone());
+                                    self.details_selected_conn = Some(conn.clone());
+                                    self.details_selected_tab = Tab::Connections;
+                                }
+                                ui.add_space(8.0);
 
-                            ui.label(time);
-                            ui.add_space(8.0);
-                            ui.label(conn.pid.to_string());
-                            ui.add_space(16.0);
-                            ui.label(&display_name);
-                            ui.add_space(16.0);
-                            ui.label(proto);
-                            ui.add_space(16.0);
-                            ui.label(src);
-                            ui.add_space(16.0);
-                            ui.label(dst);
-                            ui.add_space(16.0);
-                            ui.colored_label(threat_color, item.threat_level.label());
-                            ui.add_space(8.0);
-                            ui.colored_label(threat_color, conn.threat_score.to_string());
+                                ui.label(time);
+                                ui.add_space(8.0);
+                                ui.label(conn.pid.to_string());
+                                ui.add_space(16.0);
+                                ui.label(&display_name);
+                                ui.add_space(16.0);
+                                ui.label(proto);
+                                ui.add_space(16.0);
+                                ui.label(src);
+                                ui.add_space(16.0);
+                                ui.label(dst);
+                                ui.add_space(16.0);
+                                ui.colored_label(threat_color, item.threat_level.label());
+                                ui.add_space(8.0);
+                                ui.colored_label(threat_color, conn.threat_score.to_string());
+                            });
                         });
                     });
 
@@ -437,13 +440,18 @@ impl App {
         });
 
         // Detail panel for selected connection (top-to-bottom layout below table)
-        if let Some(idx) = self.selected_connection {
-            if idx < connections.len() {
+        if let Some(ref conn_id) = self.selected_connection_id {
+            // Find the connection by ID
+            let found_conn = connections.iter().find(|item| {
+                let c = &item.connection;
+                format!("{}:{}->{}:{}", c.src_ip, c.src_port, c.dst_ip, c.dst_port) == *conn_id
+            });
+            if let Some(item) = found_conn {
                 ui.separator();
-                crate::ui::render_connection_detail_topdown(ui, &connections[idx], &self.monitor_state);
+                crate::ui::render_connection_detail_topdown(ui, item, &self.monitor_state);
             } else {
-                self.selected_connection = None;
-                self.details_selected_index = None;
+                self.selected_connection_id = None;
+                self.details_selected_conn = None;
             }
         }
     }
@@ -828,7 +836,7 @@ impl App {
             if response.clicked() {
                 self.details_selected_node = Some(format!("cell_{}", i));
                 self.details_selected_tab = Tab::ConnectionGraph;
-                self.details_selected_index = Some(0);
+                self.details_selected_conn = Some(connections[0].connection.clone());
             }
         }
 
@@ -836,11 +844,13 @@ impl App {
         ui.set_min_size(egui::vec2(available.width(), total_height));
 
         // Details panel for selected cell (bottom section)
-        if let Some(idx) = self.details_selected_index {
-            if let Some(item) = connections.get(idx) {
-                ui.separator();
-                crate::ui::render_connection_detail_topdown(ui, item, &self.monitor_state);
-            }
+        if let Some(ref conn) = self.details_selected_conn {
+            let item = crate::state::ConnectionItem {
+                connection: conn.clone(),
+                threat_level: crate::state::ThreatLevel::from_score(conn.threat_score),
+            };
+            ui.separator();
+            crate::ui::render_connection_detail_topdown(ui, &item, &self.monitor_state);
         }
     }
 
@@ -1434,15 +1444,12 @@ impl App {
 
         match self.details_selected_tab {
             Tab::Connections => {
-                if let Some(idx) = self.details_selected_index {
-                    let connections = self.monitor_state.connections.lock().unwrap();
-                    if idx < connections.len() {
-                        crate::ui::render_connection_detail_topdown(ui, &connections[idx], &self.monitor_state);
-                    } else {
-                        ui.centered_and_justified(|ui| {
-                            ui.label(egui::RichText::new("Select a connection to view details").color(GRAY));
-                        });
-                    }
+                if let Some(ref conn) = self.details_selected_conn {
+                    let item = crate::state::ConnectionItem {
+                        connection: conn.clone(),
+                        threat_level: crate::state::ThreatLevel::from_score(conn.threat_score),
+                    };
+                    crate::ui::render_connection_detail_topdown(ui, &item, &self.monitor_state);
                 } else {
                     ui.centered_and_justified(|ui| {
                         ui.label(egui::RichText::new("Select a connection to view details").color(GRAY));
@@ -1470,15 +1477,12 @@ impl App {
                 }
             }
             Tab::ConnectionGraph => {
-                if let Some(idx) = self.details_selected_index {
-                    let connections = self.monitor_state.connections.lock().unwrap();
-                    if idx < connections.len() {
-                        crate::ui::render_connection_detail_topdown(ui, &connections[idx], &self.monitor_state);
-                    } else {
-                        ui.centered_and_justified(|ui| {
-                            ui.label(egui::RichText::new("Click [View] on a connection to see details").color(GRAY));
-                        });
-                    }
+                if let Some(ref conn) = self.details_selected_conn {
+                    let item = crate::state::ConnectionItem {
+                        connection: conn.clone(),
+                        threat_level: crate::state::ThreatLevel::from_score(conn.threat_score),
+                    };
+                    crate::ui::render_connection_detail_topdown(ui, &item, &self.monitor_state);
                 } else {
                     ui.centered_and_justified(|ui| {
                         ui.label(egui::RichText::new("Click [View] on a connection to see details").color(GRAY));
@@ -1691,13 +1695,13 @@ pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
             monitoring: false,
             connection_history: Arc::new(Mutex::new(VecDeque::with_capacity(300))),
             threat_history: Arc::new(Mutex::new(VecDeque::with_capacity(300))),
-            selected_connection: None,
+            selected_connection_id: None,
             selected_process: None,
             selected_graph_node: None,
             graph: ConnectionGraph::new(monitor_state_for_graph),
             filter: FilterSettings::default(),
             details_selected_tab: Tab::Dashboard,
-            details_selected_index: None,
+            details_selected_conn: None,
             details_selected_pid: None,
             details_selected_node: None,
             show_details_pane: true,

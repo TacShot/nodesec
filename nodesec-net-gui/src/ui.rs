@@ -549,6 +549,7 @@ pub fn render_settings(
                 settings.ignore_rules.push(crate::state::IgnoreRule {
                     id: uuid::Uuid::new_v4().to_string(),
                     process_name: Some("".to_string()),
+                    process_path: None,
                     pid: None,
                     port: None,
                     ip: None,
@@ -557,11 +558,26 @@ pub fn render_settings(
                     description: "Ignore by process name".to_string(),
                 });
             }
+
+            if ui.button("Application").clicked() {
+                settings.ignore_rules.push(crate::state::IgnoreRule {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    process_name: Some("".to_string()),
+                    process_path: Some("".to_string()),
+                    pid: None,
+                    port: None,
+                    ip: None,
+                    protocol: None,
+                    created: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                    description: "Ignore by application path".to_string(),
+                });
+            }
             
             if ui.button("PID").clicked() {
                 settings.ignore_rules.push(crate::state::IgnoreRule {
                     id: uuid::Uuid::new_v4().to_string(),
                     process_name: None,
+                    process_path: None,
                     pid: Some(0),
                     port: None,
                     ip: None,
@@ -575,6 +591,7 @@ pub fn render_settings(
                 settings.ignore_rules.push(crate::state::IgnoreRule {
                     id: uuid::Uuid::new_v4().to_string(),
                     process_name: None,
+                    process_path: None,
                     pid: None,
                     port: Some(0),
                     ip: None,
@@ -588,6 +605,7 @@ pub fn render_settings(
                 settings.ignore_rules.push(crate::state::IgnoreRule {
                     id: uuid::Uuid::new_v4().to_string(),
                     process_name: None,
+                    process_path: None,
                     pid: None,
                     port: None,
                     ip: Some("".to_string()),
@@ -600,7 +618,7 @@ pub fn render_settings(
         
         // Display ignore rules
         let mut to_remove = Vec::new();
-        for (i, rule) in settings.ignore_rules.iter().enumerate() {
+        for (i, rule) in settings.ignore_rules.iter_mut().enumerate() {
             ui.group(|ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(&rule.description).color(WHITE));
@@ -608,6 +626,11 @@ pub fn render_settings(
                     
                     if let Some(name) = &rule.process_name {
                         ui.label(format!("Process: {}", name));
+                    }
+                    if let Some(path) = &rule.process_path {
+                        if !path.is_empty() {
+                            ui.label(format!("Path: {}", path));
+                        }
                     }
                     if let Some(pid) = rule.pid {
                         if pid > 0 {
@@ -626,6 +649,20 @@ pub fn render_settings(
                     }
                     if let Some(proto) = &rule.protocol {
                         ui.label(format!("Protocol: {:?}", proto));
+                    }
+                    
+                    // Editable fields
+                    if let Some(name) = rule.process_name.as_mut() {
+                        if !name.is_empty() {
+                            ui.label("Edit name:");
+                            ui.text_edit_singleline(name);
+                        }
+                    }
+                    if let Some(path) = rule.process_path.as_mut() {
+                        if !path.is_empty() {
+                            ui.label("Edit path:");
+                            ui.text_edit_singleline(path);
+                        }
                     }
                     
                     if ui.button("[Remove]").clicked() {

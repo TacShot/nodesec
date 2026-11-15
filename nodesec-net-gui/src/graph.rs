@@ -171,39 +171,121 @@ impl ConnectionGraph {
 
         let mut interface_groups: HashMap<String, Vec<u32>> = HashMap::new();
 
+        // Track which connection indices have been assigned to process nodes
+        let mut assigned_conn_indices: HashSet<usize> = HashSet::new();
+
         for (pid, conns) in &process_connections {
-            let first = conns[0];
-            let avg_threat = conns.iter().map(|c| c.threat_score as u32).sum::<u32>() / conns.len() as u32;
-            let is_suspicious = conns.iter().any(|c| c.is_suspicious);
+            if *pid == 0 {
+                // For unknown PIDs, create individual nodes per connection
+                // so they don't all collapse into one "proc_0" node
+                for (idx, conn) in conns.iter().enumerate() {
+                    let conn_id = format!("conn_{}_{}", idx, conn.src_port);
+                    assigned_conn_indices.insert(idx);
+                    let is_suspicious = conn.is_suspicious;
+                    let color = if is_suspicious {
+                        if conn.threat_score > 75 { Color32::RED } else { Color32::from_rgb(255, 165, 0) }
+                    } else {
+                        Color32::from_rgb(0, 200, 100)
+                    };
+                    let conn_type = ConnectionType::from_connection(conn);
 
-            let color = if is_suspicious {
-                if avg_threat > 75 { Color32::RED } else { Color32::from_rgb(255, 165, 0) }
+                    let node = GraphNode {
+                        id: conn_id.clone(),
+                        label: format!("{}:{} -> {}:{}", conn.src_ip, conn.src_port, conn.dst_ip, conn.dst_port),
+                        pos: old_positions.get(&conn_id).cloned().unwrap_or(Pos2::new(
+                            (idx as f32) * 80.0,
+                            (idx as f32) * 60.0,
+                        )),
+                        target_pos: Pos2::ZERO,
+                        color,
+                        size: 25.0,
+                        is_process: false,
+                        threat_score: conn.threat_score,
+                        connections: 1,
+                        pid: None,
+                        process_name: "unknown".to_string(),
+                        interface: Some(conn_type.label().to_string()),
+                        connection_type: conn_type,
+                        remote_ip: Some(conn.dst_ip.to_string()),
+                        remote_port: Some(conn.dst_port),
+                    };
+                    nodes.insert(node.id.clone(), node);
+                }
             } else {
-                Color32::from_rgb(0, 200, 100)
-            };
+                let first = conns[0];
+                let avg_threat = conns.iter().map(|c| c.threat_score as u32).sum::<u32>() / conns.len() as u32;
+                let is_suspicious = conns.iter().any(|c| c.is_suspicious);
 
-            let conn_type = ConnectionType::from_connection(first);
-            let interface_key = conn_type.label().to_string();
-            interface_groups.entry(interface_key.clone()).or_default().push(*pid);
+                let color = if is_suspicious {
+                    if avg_threat > 75 { Color32::RED } else { Color32::from_rgb(255, 165, 0) }
+                } else {
+                    Color32::from_rgb(0, 200, 100)
+                };
 
-            let node = GraphNode {
-                id: format!("proc_{}", pid),
-                label: if first.process_name.is_empty() { "unknown".to_string() } else { first.process_name.clone() },
-                pos: old_positions.get(&format!("proc_{}", pid)).cloned().unwrap_or(Pos2::ZERO),
-                target_pos: Pos2::ZERO,
-                color,
-                size: 30.0 + (conns.len() as f32 * 2.0).min(50.0),
-                is_process: true,
-                threat_score: avg_threat as u8,
-                connections: conns.len(),
-                pid: Some(*pid),
-                process_name: first.process_name.clone(),
-                interface: Some(interface_key),
-                connection_type: ConnectionType::Process,
-                remote_ip: None,
-                remote_port: None,
-            };
-            nodes.insert(node.id.clone(), node);
+                let conn_type = ConnectionType::from_connection(first);
+                let interface_key = conn_type.label().to_string();
+                interface_groups.entry(interface_key.clone()).or_default().push(*pid);
+
+                let node = GraphNode {
+                    id: format!("proc_{}", pid),
+                    label: if first.process_name.is_empty() { "unknown".to_string() } else { first.process_name.clone() },
+                    pos: old_positions.get(&format!("proc_{}", pid)).cloned().unwrap_or(Pos2::new(
+                        (*pid as f32) % 20.0 * 100.0,
+                        (*pid as f32) / 20.0 * 100.0,
+                    )),
+                    target_pos: Pos2::ZERO,
+                    color,
+                    size: 30.0 + (conns.len() as f32 * 2.0).min(50.0),
+                    is_process: true,
+                    threat_score: avg_threat as u8,
+                    connections: conns.len(),
+                    pid: Some(*pid),
+                    process_name: first.process_name.clone(),
+                    interface: Some(interface_key),
+                    connection_type: ConnectionType::Process,
+                    remote_ip: None,
+                    remote_port: None,
+                };
+                nodes.insert(node.id.clone(), node);
+            }
+        }
+
+        // Also create nodes for any connections that weren't assigned to process nodes
+        // (this handles edge cases where process_connections might miss some)
+        for (idx, item) in limited.iter().enumerate() {
+            if !assigned_conn_indices.contains(&idx) && item.connection.pid == 0 {
+                let conn = &item.connection;
+                let conn_id = format!("conn_orphan_{}", idx);
+                let is_suspicious = conn.is_suspicious;
+                let color = if is_suspicious {
+                    if conn.threat_score > 75 { Color32::RED } else { Color32::from_rgb(255, 165, 0) }
+                } else {
+                    Color32::from_rgb(0, 200, 100)
+                };
+                let conn_type = ConnectionType::from_connection(conn);
+
+                let node = GraphNode {
+                    id: conn_id.clone(),
+                    label: format!("{}:{} -> {}:{}", conn.src_ip, conn.src_port, conn.dst_ip, conn.dst_port),
+                    pos: old_positions.get(&conn_id).cloned().unwrap_or(Pos2::new(
+                        (idx as f32) * 80.0,
+                        (idx as f32) * 60.0,
+                    )),
+                    target_pos: Pos2::ZERO,
+                    color,
+                    size: 25.0,
+                    is_process: false,
+                    threat_score: conn.threat_score,
+                    connections: 1,
+                    pid: None,
+                    process_name: "unknown".to_string(),
+                    interface: Some(conn_type.label().to_string()),
+                    connection_type: conn_type,
+                    remote_ip: Some(conn.dst_ip.to_string()),
+                    remote_port: Some(conn.dst_port),
+                };
+                nodes.insert(node.id.clone(), node);
+            }
         }
 
         let mut remote_hosts: HashMap<String, (String, u16, Vec<&nodesec_core::models::NetworkConnection>, ConnectionType)> = HashMap::new();
@@ -249,17 +331,35 @@ impl ConnectionGraph {
             nodes.insert(node.id.clone(), node);
 
             let mut process_ids: HashSet<u32> = HashSet::new();
-            for conn in conns {
+            for conn in conns.iter() {
                 process_ids.insert(conn.pid);
             }
 
-            for pid in process_ids {
-                edges.push(GraphEdge {
-                    from: format!("proc_{}", pid),
-                    to: format!("host_{}", key),
-                    color: if is_suspicious { Color32::RED } else { Color32::from_rgb(100, 100, 100) },
-                    thickness: 1.5,
-                });
+            // Create edges from each process/connection node to this host
+            for conn in conns {
+                if conn.pid == 0 {
+                    // Find the individual connection node for unknown PID
+                    // Use a heuristic to match - look for nodes with matching remote addr
+                    for (idx, item) in limited.iter().enumerate() {
+                        if item.connection.dst_ip == conn.dst_ip && item.connection.dst_port == conn.dst_port && item.connection.pid == 0 {
+                            let conn_id = format!("conn_{}_{}", idx, item.connection.src_port);
+                            edges.push(GraphEdge {
+                                from: conn_id,
+                                to: format!("host_{}", key),
+                                color: if is_suspicious { Color32::RED } else { Color32::from_rgb(100, 100, 100) },
+                                thickness: 1.5,
+                            });
+                            break;
+                        }
+                    }
+                } else {
+                    edges.push(GraphEdge {
+                        from: format!("proc_{}", conn.pid),
+                        to: format!("host_{}", key),
+                        color: if is_suspicious { Color32::RED } else { Color32::from_rgb(100, 100, 100) },
+                        thickness: 1.5,
+                    });
+                }
             }
         }
 
