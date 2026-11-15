@@ -425,20 +425,26 @@ pub fn render_statistics(
     ui.separator();
     ui.heading("Threat Distribution");
     
-    // Threat level breakdown chart
+    // Threat level breakdown chart (NOT Grid — Grid crashes with interactive widgets like ProgressBar)
     let total = connections.len().max(1) as f64;
-    egui::Grid::new("threat_breakdown").num_columns(3).show(ui, |ui| {
-        for level in [ThreatLevel::Safe, ThreatLevel::Low, ThreatLevel::Medium, ThreatLevel::High, ThreatLevel::Critical] {
-            let count = counts.get(&level).unwrap_or(&0);
-            let pct = *count as f64 / total * 100.0;
-            let color = level.color();
-            
+    ui.heading(egui::RichText::new("By Threat Level:").color(ORANGE).strong());
+    for level in [ThreatLevel::Safe, ThreatLevel::Low, ThreatLevel::Medium, ThreatLevel::High, ThreatLevel::Critical] {
+        let count = counts.get(&level).unwrap_or(&0);
+        let pct = *count as f64 / total * 100.0;
+        let color = level.color();
+
+        ui.horizontal(|ui| {
             ui.label(egui::RichText::new(level.label()).color(color).strong());
-            ui.add(egui::ProgressBar::new((pct / 100.0) as f32).fill(color).show_percentage());
+            ui.add_space(8.0);
+            let bar = egui::ProgressBar::new((pct / 100.0) as f32)
+                .fill(color)
+                .show_percentage()
+                .desired_width(120.0);
+            ui.add(bar);
+            ui.add_space(8.0);
             ui.label(format!("{} ({:.1}%)", count, pct));
-            ui.end_row();
-        }
-    });
+        });
+    }
 }
 
 pub fn render_settings(
@@ -453,27 +459,27 @@ pub fn render_settings(
     ui.heading(egui::RichText::new("Scan Configuration").color(ORANGE));
     {
         let mut settings = monitor_state.scan_settings.lock().unwrap();
-        
-        egui::Grid::new("scan_settings").num_columns(2).show(ui, |ui| {
+
+        // Scan Settings using horizontal rows (NOT Grid — Grid crashes with DragValue/checkbox)
+        ui.horizontal(|ui| {
             ui.label("Scan Interval (seconds):");
             ui.add(egui::DragValue::new(&mut settings.scan_interval_seconds).range(1..=60).speed(0.5));
-            ui.end_row();
-            
+        });
+        ui.horizontal(|ui| {
             ui.label("Max Connections:");
             ui.add(egui::DragValue::new(&mut settings.max_connections).range(100..=10000).speed(10.0));
-            ui.end_row();
-            
+        });
+        ui.horizontal(|ui| {
             ui.label("Retention (seconds):");
             ui.add(egui::DragValue::new(&mut settings.retention_seconds).range(60..=3600).speed(10.0));
-            ui.end_row();
-            
+        });
+        ui.horizontal(|ui| {
             ui.label("Threat Threshold:");
             ui.add(egui::DragValue::new(&mut settings.threat_threshold).range(0..=100).speed(1.0));
-            ui.end_row();
-            
+        });
+        ui.horizontal(|ui| {
             ui.label("Auto Refresh:");
             ui.checkbox(&mut settings.auto_refresh, "");
-            ui.end_row();
         });
     }
     

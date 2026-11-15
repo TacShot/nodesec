@@ -192,65 +192,96 @@ impl App {
         egui::ScrollArea::both().show(ui, |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
 
-            egui::Grid::new("connections_table")
-                .striped(true)
-                .min_col_width(80.0)
-                .show(ui, |ui| {
-                    // Header
-                    ui.label(egui::RichText::new("Sel").color(ORANGE).strong());
-                    ui.label(egui::RichText::new("Time").color(ORANGE).strong());
-                    ui.label(egui::RichText::new("PID").color(ORANGE).strong());
-                    ui.label(egui::RichText::new("Process").color(ORANGE).strong());
-                    ui.label(egui::RichText::new("Proto").color(ORANGE).strong());
-                    ui.label(egui::RichText::new("Source").color(ORANGE).strong());
-                    ui.label(egui::RichText::new("Destination").color(ORANGE).strong());
-                    ui.label(egui::RichText::new("Threat").color(ORANGE).strong());
-                    ui.label(egui::RichText::new("Score").color(ORANGE).strong());
-                    ui.end_row();
+            // Header row
+            ui.horizontal(|ui| {
+                ui.add_space(2.0);
+                ui.label(egui::RichText::new("Sel").color(ORANGE).strong());
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("Time").color(ORANGE).strong());
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("PID").color(ORANGE).strong());
+                ui.add_space(16.0);
+                ui.label(egui::RichText::new("Process").color(ORANGE).strong());
+                ui.add_space(16.0);
+                ui.label(egui::RichText::new("Proto").color(ORANGE).strong());
+                ui.add_space(16.0);
+                ui.label(egui::RichText::new("Source").color(ORANGE).strong());
+                ui.add_space(16.0);
+                ui.label(egui::RichText::new("Destination").color(ORANGE).strong());
+                ui.add_space(16.0);
+                ui.label(egui::RichText::new("Threat").color(ORANGE).strong());
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("Score").color(ORANGE).strong());
+            });
+            ui.separator();
 
-                    for (i, item) in connections.iter().enumerate() {
-                        if !self.filter.matches(item) {
-                            continue;
-                        }
+            // Data rows using horizontal layout (NOT Grid — Grid crashes with interactive widgets)
+            for (i, item) in connections.iter().enumerate() {
+                if !self.filter.matches(item) {
+                    continue;
+                }
 
-                        let conn = &item.connection;
-                        let threat_color = item.threat_level.color();
+                let conn = &item.connection;
+                let threat_color = item.threat_level.color();
 
-                        let src = format!("{}:{}", conn.src_ip, conn.src_port);
-                        let dst = format!("{}:{}", conn.dst_ip, conn.dst_port);
-                        let proto = format!("{:?}", conn.protocol);
-                        let time = chrono::DateTime::from_timestamp(conn.timestamp as i64, 0)
-                            .map(|dt| dt.format("%H:%M:%S").to_string())
-                            .unwrap_or_default();
+                let src = format!("{}:{}", conn.src_ip, conn.src_port);
+                let dst = format!("{}:{}", conn.dst_ip, conn.dst_port);
+                let proto = format!("{:?}", conn.protocol);
+                let time = chrono::DateTime::from_timestamp(conn.timestamp as i64, 0)
+                    .map(|dt| dt.format("%H:%M:%S").to_string())
+                    .unwrap_or_default();
 
-                        let selected_conn = self.selected_connection;
-                        let is_selected = selected_conn == Some(i);
+                let selected_conn = self.selected_connection;
+                let is_selected = selected_conn == Some(i);
 
-                        // Use SelectableLabel widget for full row selection
-                        let display_name = if conn.process_name.is_empty() {
-                            "unknown".to_string()
-                        } else {
-                            conn.process_name.clone()
-                        };
+                let display_name = if conn.process_name.is_empty() {
+                    "unknown".to_string()
+                } else {
+                    conn.process_name.clone()
+                };
 
-                        let response = ui.add(egui::widgets::SelectableLabel::new(is_selected, display_name));
-                        if response.clicked() {
-                            self.selected_connection = Some(i);
-                            self.details_selected_index = Some(i);
-                            self.details_selected_tab = Tab::Connections;
-                        }
+                let bg_color = if is_selected {
+                    egui::Color32::from_rgb(60, 60, 60)
+                } else if i % 2 == 1 {
+                    egui::Color32::from_rgb(50, 50, 50)
+                } else {
+                    DARK_BG
+                };
 
-                        ui.label(time);
-                        ui.label(conn.pid.to_string());
-                        ui.label(proto);
-                        ui.label(src);
-                        ui.label(dst);
-                        ui.label(egui::RichText::new(item.threat_level.label()).color(threat_color).strong());
-                        ui.label(egui::RichText::new(conn.threat_score.to_string()).color(threat_color));
+                ui.horizontal(|ui| {
+                    ui.add_space(2.0);
 
-                        ui.end_row();
+                    // Select button — full row selection
+                    let btn_text = if is_selected { "[Selected]" } else { "[Select]" };
+                    if ui.small_button(btn_text).clicked() {
+                        self.selected_connection = Some(i);
+                        self.details_selected_index = Some(i);
+                        self.details_selected_tab = Tab::Connections;
                     }
+                    ui.add_space(8.0);
+
+                    ui.label(time);
+                    ui.add_space(8.0);
+                    ui.label(conn.pid.to_string());
+                    ui.add_space(16.0);
+                    ui.label(&display_name);
+                    ui.add_space(16.0);
+                    ui.label(proto);
+                    ui.add_space(16.0);
+                    ui.label(src);
+                    ui.add_space(16.0);
+                    ui.label(dst);
+                    ui.add_space(16.0);
+                    ui.colored_label(threat_color, item.threat_level.label());
+                    ui.add_space(8.0);
+                    ui.colored_label(threat_color, conn.threat_score.to_string());
                 });
+
+                // Subtle row separator
+                ui.add_space(1.0);
+                ui.separator();
+                ui.add_space(1.0);
+            }
         });
 
         // Detail panel for selected connection (top-to-bottom layout below table)
@@ -292,121 +323,155 @@ impl App {
         ui.separator();
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("process_tree")
-                .striped(true)
-                .min_col_width(100.0)
-                .show(ui, |ui| {
-                    // Header - 7 columns
-                    ui.label(egui::RichText::new("").color(ORANGE).strong()); // select column
-                    ui.label(egui::RichText::new("Process").color(ORANGE).strong());
-                    ui.label(egui::RichText::new("PID").color(ORANGE).strong());
-                    ui.label(egui::RichText::new("User").color(ORANGE).strong());
-                    ui.label(egui::RichText::new("Connections").color(ORANGE).strong());
-                    ui.label(egui::RichText::new("Max Threat").color(ORANGE).strong());
-                    ui.label(egui::RichText::new("Status").color(ORANGE).strong());
-                    ui.end_row();
+            // Header row
+            ui.horizontal(|ui| {
+                ui.add_space(2.0);
+                ui.label(egui::RichText::new("Sel").color(ORANGE).strong());
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("Process").color(ORANGE).strong());
+                ui.add_space(16.0);
+                ui.label(egui::RichText::new("PID").color(ORANGE).strong());
+                ui.add_space(16.0);
+                ui.label(egui::RichText::new("User").color(ORANGE).strong());
+                ui.add_space(16.0);
+                ui.label(egui::RichText::new("Connections").color(ORANGE).strong());
+                ui.add_space(16.0);
+                ui.label(egui::RichText::new("Max Threat").color(ORANGE).strong());
+                ui.add_space(16.0);
+                ui.label(egui::RichText::new("Status").color(ORANGE).strong());
+            });
+            ui.separator();
 
-                    for proc in processes {
-                        // Apply filter
-                        let mut matches = true;
-                        if !self.filter.process_name.is_empty() {
-                            if !proc.name.to_lowercase().contains(&self.filter.process_name.to_lowercase()) {
-                                matches = false;
-                            }
-                        }
-                        if let Some(pid) = self.filter.pid {
-                            if proc.pid != pid {
-                                matches = false;
-                            }
-                        }
-                        if self.filter.only_suspicious && !proc.is_suspicious {
-                            matches = false;
-                        }
-                        if proc.total_threat_score < self.filter.min_threat_score || proc.total_threat_score > self.filter.max_threat_score {
-                            matches = false;
-                        }
+            for proc in processes {
+                // Apply filter
+                let mut matches = true;
+                if !self.filter.process_name.is_empty() {
+                    if !proc.name.to_lowercase().contains(&self.filter.process_name.to_lowercase()) {
+                        matches = false;
+                    }
+                }
+                if let Some(pid) = self.filter.pid {
+                    if proc.pid != pid {
+                        matches = false;
+                    }
+                }
+                if self.filter.only_suspicious && !proc.is_suspicious {
+                    matches = false;
+                }
+                if proc.total_threat_score < self.filter.min_threat_score || proc.total_threat_score > self.filter.max_threat_score {
+                    matches = false;
+                }
 
-                        if !matches {
-                            continue;
-                        }
+                if !matches {
+                    continue;
+                }
 
-                        let threat_color = match proc.total_threat_score {
-                            0..=25 => GREEN,
-                            26..=49 => YELLOW,
-                            50..=74 => ORANGE,
-                            75..=89 => egui::Color32::from_rgb(255, 100, 100),
-                            _ => RED,
-                        };
+                let threat_color = match proc.total_threat_score {
+                    0..=25 => GREEN,
+                    26..=49 => YELLOW,
+                    50..=74 => ORANGE,
+                    75..=89 => egui::Color32::from_rgb(255, 100, 100),
+                    _ => RED,
+                };
 
-                        let selected_proc = self.selected_process;
-                        let is_selected = selected_proc == Some(proc.pid);
+                let selected_proc = self.selected_process;
+                let is_selected = selected_proc == Some(proc.pid);
 
-                        // Use SelectableLabel widget for row click (no right-click context menu inside Grid!)
-                        let process_display = if proc.name.is_empty() {
-                            "unknown".to_string()
-                        } else {
-                            proc.name.clone()
-                        };
+                let process_display = if proc.name.is_empty() {
+                    "unknown".to_string()
+                } else {
+                    proc.name.clone()
+                };
 
-                        let response = ui.add(egui::widgets::SelectableLabel::new(is_selected, process_display));
-                        if response.clicked() {
-                            self.selected_process = Some(proc.pid);
-                            self.details_selected_pid = Some(proc.pid);
-                            self.details_selected_tab = Tab::ProcessTree;
-                        }
+                let bg_color = if is_selected {
+                    egui::Color32::from_rgb(60, 60, 60)
+                } else {
+                    DARK_BG
+                };
 
-                        ui.label(proc.pid.to_string());
-                        ui.label(proc.user.as_deref().unwrap_or("N/A"));
-                        ui.label(proc.connections.len().to_string());
-                        ui.colored_label(threat_color, proc.total_threat_score.to_string());
-                        ui.colored_label(threat_color, if proc.is_suspicious { "SUSPICIOUS" } else { "OK" });
-                        ui.end_row();
+                ui.horizontal(|ui| {
+                    ui.add_space(2.0);
 
-                        // Show connection details inline for selected process
-                        if is_selected {
-                            ui.add_space(4.0);
-                            if let Some(path) = &proc.path {
-                                ui.label(egui::RichText::new(format!("Path: {}", path)).color(GRAY).size(11.0));
-                            }
-                            if let Some(user) = &proc.user {
-                                ui.label(egui::RichText::new(format!("User: {}", user)).color(GRAY).size(11.0));
-                            }
-                            ui.separator();
-                            ui.label(egui::RichText::new("Network Connections:").color(WHITE).strong().size(11.0));
+                    let btn_text = if is_selected { "[Selected]" } else { "[Select]" };
+                    if ui.small_button(btn_text).clicked() {
+                        self.selected_process = Some(proc.pid);
+                        self.details_selected_pid = Some(proc.pid);
+                        self.details_selected_tab = Tab::ProcessTree;
+                    }
+                    ui.add_space(8.0);
 
-                            egui::Grid::new(format!("proc_conns_{}", proc.pid))
-                                .striped(true)
-                                .min_col_width(80.0)
-                                .show(ui, |ui| {
-                                    ui.label(egui::RichText::new("Protocol").color(ORANGE).strong().size(11.0));
-                                    ui.label(egui::RichText::new("Source").color(ORANGE).strong().size(11.0));
-                                    ui.label(egui::RichText::new("Destination").color(ORANGE).strong().size(11.0));
-                                    ui.label(egui::RichText::new("Threat").color(ORANGE).strong().size(11.0));
-                                    ui.end_row();
+                    ui.label(&process_display);
+                    ui.add_space(16.0);
+                    ui.label(proc.pid.to_string());
+                    ui.add_space(16.0);
+                    ui.label(proc.user.as_deref().unwrap_or("N/A"));
+                    ui.add_space(16.0);
+                    ui.label(proc.connections.len().to_string());
+                    ui.add_space(16.0);
+                    ui.colored_label(threat_color, proc.total_threat_score.to_string());
+                    ui.add_space(16.0);
+                    ui.colored_label(threat_color, if proc.is_suspicious { "SUSPICIOUS" } else { "OK" });
+                });
 
-                                    for conn in &proc.connections {
-                                        let proto = format!("{:?}", conn.protocol);
-                                        let src = format!("{}:{}", conn.src_ip, conn.src_port);
-                                        let dst = format!("{}:{}", conn.dst_ip, conn.dst_port);
-                                        let conn_threat_color = match conn.threat_score {
-                                            0..=25 => GREEN,
-                                            26..=49 => YELLOW,
-                                            50..=74 => ORANGE,
-                                            75..=89 => egui::Color32::from_rgb(255, 100, 100),
-                                            _ => RED,
-                                        };
+                ui.add_space(1.0);
+                ui.separator();
+                ui.add_space(1.0);
 
-                                        ui.label(egui::RichText::new(proto).size(11.0));
-                                        ui.label(egui::RichText::new(src).size(11.0));
-                                        ui.label(egui::RichText::new(dst).size(11.0));
-                                        ui.colored_label(conn_threat_color, egui::RichText::new(conn.threat_score.to_string()).size(11.0));
-                                        ui.end_row();
-                                    }
-                                });
+                // Show connection details inline for selected process
+                if is_selected {
+                    ui.add_space(4.0);
+                    if let Some(path) = &proc.path {
+                        ui.label(egui::RichText::new(format!("Path: {}", path)).color(GRAY).size(11.0));
+                    }
+                    if let Some(user) = &proc.user {
+                        ui.label(egui::RichText::new(format!("User: {}", user)).color(GRAY).size(11.0));
+                    }
+                    ui.separator();
+                    ui.label(egui::RichText::new("Network Connections:").color(WHITE).strong().size(11.0));
+
+                    // Connection details using horizontal rows (NOT Grid)
+                    if proc.connections.is_empty() {
+                        ui.label(egui::RichText::new("  No network connections").color(GRAY).size(11.0));
+                    } else {
+                        // Header for connection details
+                        ui.horizontal(|ui| {
                             ui.add_space(8.0);
+                            ui.label(egui::RichText::new("Protocol").color(ORANGE).strong().size(11.0));
+                            ui.add_space(16.0);
+                            ui.label(egui::RichText::new("Source").color(ORANGE).strong().size(11.0));
+                            ui.add_space(16.0);
+                            ui.label(egui::RichText::new("Destination").color(ORANGE).strong().size(11.0));
+                            ui.add_space(16.0);
+                            ui.label(egui::RichText::new("Threat").color(ORANGE).strong().size(11.0));
+                        });
+
+                        for conn in &proc.connections {
+                            let proto = format!("{:?}", conn.protocol);
+                            let src = format!("{}:{}", conn.src_ip, conn.src_port);
+                            let dst = format!("{}:{}", conn.dst_ip, conn.dst_port);
+                            let conn_threat_color = match conn.threat_score {
+                                0..=25 => GREEN,
+                                26..=49 => YELLOW,
+                                50..=74 => ORANGE,
+                                75..=89 => egui::Color32::from_rgb(255, 100, 100),
+                                _ => RED,
+                            };
+
+                            ui.horizontal(|ui| {
+                                ui.add_space(8.0);
+                                ui.label(egui::RichText::new(proto).size(11.0));
+                                ui.add_space(16.0);
+                                ui.label(egui::RichText::new(src).size(11.0));
+                                ui.add_space(16.0);
+                                ui.label(egui::RichText::new(dst).size(11.0));
+                                ui.add_space(16.0);
+                                ui.colored_label(conn_threat_color, egui::RichText::new(conn.threat_score.to_string()).size(11.0));
+                            });
                         }
                     }
-                });
+                    ui.add_space(8.0);
+                }
+            }
         });
     }
 
