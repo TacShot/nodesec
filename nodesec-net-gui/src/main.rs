@@ -50,6 +50,44 @@ impl Tab {
     }
 }
 
+// Sort state for tables
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SortField {
+    Process,
+    Pid,
+    User,
+    Connections,
+    ThreatScore,
+    Status,
+    Time,
+    Proto,
+    Source,
+    Destination,
+    Score,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SortDir {
+    Asc,
+    Desc,
+}
+
+impl SortDir {
+    fn toggle(&mut self) {
+        *self = match self {
+            SortDir::Asc => SortDir::Desc,
+            SortDir::Desc => SortDir::Asc,
+        };
+    }
+
+    fn icon(&self) -> &'static str {
+        match self {
+            SortDir::Asc => "▲",
+            SortDir::Desc => "▼",
+        }
+    }
+}
+
 struct App {
     selected_tab: Tab,
     monitor_state: Arc<state::MonitorState>,
@@ -69,6 +107,13 @@ struct App {
     details_selected_index: Option<usize>,
     details_selected_pid: Option<u32>,
     details_selected_node: Option<String>,
+    // Details pane visibility
+    show_details_pane: bool,
+    // Sort state
+    conn_sort_field: SortField,
+    conn_sort_dir: SortDir,
+    proc_sort_field: SortField,
+    proc_sort_dir: SortDir,
 }
 
 impl App {
@@ -90,6 +135,11 @@ impl App {
             details_selected_index: None,
             details_selected_pid: None,
             details_selected_node: None,
+            show_details_pane: true,
+            conn_sort_field: SortField::Time,
+            conn_sort_dir: SortDir::Desc,
+            proc_sort_field: SortField::Process,
+            proc_sort_dir: SortDir::Asc,
         }
     }
 
@@ -187,40 +237,118 @@ impl App {
         ui.separator();
 
         // Clone connections to avoid borrow issues
-        let connections = self.monitor_state.connections.lock().unwrap().clone();
+        let mut connections: Vec<crate::state::ConnectionItem> = self.monitor_state.connections.lock().unwrap().clone();
+
+        // Apply filter
+        connections.retain(|item| self.filter.matches(item));
+
+        // Sort
+        connections.sort_by(|a, b| {
+            let ordering = match self.conn_sort_field {
+                SortField::Process => a.connection.process_name.cmp(&b.connection.process_name),
+                SortField::Pid => a.connection.pid.cmp(&b.connection.pid),
+                SortField::Time => {
+                    let ta = chrono::DateTime::from_timestamp(a.connection.timestamp as i64, 0).unwrap_or_default();
+                    let tb = chrono::DateTime::from_timestamp(b.connection.timestamp as i64, 0).unwrap_or_default();
+                    ta.cmp(&tb)
+                }
+                SortField::Proto => format!("{:?}", a.connection.protocol).cmp(&format!("{:?}", b.connection.protocol)),
+                SortField::Source => format!("{}:{}", a.connection.src_ip, a.connection.src_port).cmp(
+                    &format!("{}:{}", b.connection.src_ip, b.connection.src_port)),
+                SortField::Destination => format!("{}:{}", a.connection.dst_ip, a.connection.dst_port).cmp(
+                    &format!("{}:{}", b.connection.dst_ip, b.connection.dst_port)),
+                SortField::Score => a.connection.threat_score.cmp(&b.connection.threat_score),
+                _ => std::cmp::Ordering::Equal,
+            };
+            match self.conn_sort_dir {
+                SortDir::Asc => ordering,
+                SortDir::Desc => ordering.reverse(),
+            }
+        });
 
         egui::ScrollArea::both().show(ui, |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
 
-            // Header row
+            // Sortable header row — click to toggle sort
             ui.horizontal(|ui| {
                 ui.add_space(2.0);
-                ui.label(egui::RichText::new("Sel").color(ORANGE).strong());
+
+                // Sel column
+                if ui.small_button("Sel").clicked() {
+                    // No sort for selection column
+                }
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new("Time").color(ORANGE).strong());
+
+                // Time
+                if self.conn_sort_field == SortField::Time {
+                    ui.label(egui::RichText::new(format!("Time {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
+                } else if ui.small_button("Time").clicked() {
+                    self.conn_sort_field = SortField::Time;
+                    self.conn_sort_dir = SortDir::Asc;
+                }
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new("PID").color(ORANGE).strong());
+
+                // PID
+                if self.conn_sort_field == SortField::Pid {
+                    ui.label(egui::RichText::new(format!("PID {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
+                } else if ui.small_button("PID").clicked() {
+                    self.conn_sort_field = SortField::Pid;
+                    self.conn_sort_dir = SortDir::Asc;
+                }
                 ui.add_space(16.0);
-                ui.label(egui::RichText::new("Process").color(ORANGE).strong());
+
+                // Process
+                if self.conn_sort_field == SortField::Process {
+                    ui.label(egui::RichText::new(format!("Process {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
+                } else if ui.small_button("Process").clicked() {
+                    self.conn_sort_field = SortField::Process;
+                    self.conn_sort_dir = SortDir::Asc;
+                }
                 ui.add_space(16.0);
-                ui.label(egui::RichText::new("Proto").color(ORANGE).strong());
+
+                // Proto
+                if self.conn_sort_field == SortField::Proto {
+                    ui.label(egui::RichText::new(format!("Proto {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
+                } else if ui.small_button("Proto").clicked() {
+                    self.conn_sort_field = SortField::Proto;
+                    self.conn_sort_dir = SortDir::Asc;
+                }
                 ui.add_space(16.0);
-                ui.label(egui::RichText::new("Source").color(ORANGE).strong());
+
+                // Source
+                if self.conn_sort_field == SortField::Source {
+                    ui.label(egui::RichText::new(format!("Source {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
+                } else if ui.small_button("Source").clicked() {
+                    self.conn_sort_field = SortField::Source;
+                    self.conn_sort_dir = SortDir::Asc;
+                }
                 ui.add_space(16.0);
-                ui.label(egui::RichText::new("Destination").color(ORANGE).strong());
+
+                // Destination
+                if self.conn_sort_field == SortField::Destination {
+                    ui.label(egui::RichText::new(format!("Destination {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
+                } else if ui.small_button("Destination").clicked() {
+                    self.conn_sort_field = SortField::Destination;
+                    self.conn_sort_dir = SortDir::Asc;
+                }
                 ui.add_space(16.0);
-                ui.label(egui::RichText::new("Threat").color(ORANGE).strong());
+
+                // Threat
+                if self.conn_sort_field == SortField::Score {
+                    ui.label(egui::RichText::new(format!("Score {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
+                } else if ui.small_button("Score").clicked() {
+                    self.conn_sort_field = SortField::Score;
+                    self.conn_sort_dir = SortDir::Asc;
+                }
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new("Score").color(ORANGE).strong());
+
+                ui.label(egui::RichText::new("").color(ORANGE)); // spacer
             });
             ui.separator();
 
             // Data rows using horizontal layout (NOT Grid — Grid crashes with interactive widgets)
+            // Wrap each row in a Frame for visual separation
             for (i, item) in connections.iter().enumerate() {
-                if !self.filter.matches(item) {
-                    continue;
-                }
-
                 let conn = &item.connection;
                 let threat_color = item.threat_level.color();
 
@@ -242,45 +370,46 @@ impl App {
 
                 let bg_color = if is_selected {
                     egui::Color32::from_rgb(60, 60, 60)
-                } else if i % 2 == 1 {
-                    egui::Color32::from_rgb(50, 50, 50)
                 } else {
                     DARK_BG
                 };
 
-                ui.horizontal(|ui| {
-                    ui.add_space(2.0);
+                egui::Frame::none()
+                    .fill(bg_color)
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(40, 40, 40)))
+                    .inner_margin(4.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add_space(2.0);
 
-                    // Select button — full row selection
-                    let btn_text = if is_selected { "[Selected]" } else { "[Select]" };
-                    if ui.small_button(btn_text).clicked() {
-                        self.selected_connection = Some(i);
-                        self.details_selected_index = Some(i);
-                        self.details_selected_tab = Tab::Connections;
-                    }
-                    ui.add_space(8.0);
+                            // Select button — full row selection
+                            let btn_text = if is_selected { "[Selected]" } else { "[Select]" };
+                            if ui.small_button(btn_text).clicked() {
+                                self.selected_connection = Some(i);
+                                self.details_selected_index = Some(i);
+                                self.details_selected_tab = Tab::Connections;
+                            }
+                            ui.add_space(8.0);
 
-                    ui.label(time);
-                    ui.add_space(8.0);
-                    ui.label(conn.pid.to_string());
-                    ui.add_space(16.0);
-                    ui.label(&display_name);
-                    ui.add_space(16.0);
-                    ui.label(proto);
-                    ui.add_space(16.0);
-                    ui.label(src);
-                    ui.add_space(16.0);
-                    ui.label(dst);
-                    ui.add_space(16.0);
-                    ui.colored_label(threat_color, item.threat_level.label());
-                    ui.add_space(8.0);
-                    ui.colored_label(threat_color, conn.threat_score.to_string());
-                });
+                            ui.label(time);
+                            ui.add_space(8.0);
+                            ui.label(conn.pid.to_string());
+                            ui.add_space(16.0);
+                            ui.label(&display_name);
+                            ui.add_space(16.0);
+                            ui.label(proto);
+                            ui.add_space(16.0);
+                            ui.label(src);
+                            ui.add_space(16.0);
+                            ui.label(dst);
+                            ui.add_space(16.0);
+                            ui.colored_label(threat_color, item.threat_level.label());
+                            ui.add_space(8.0);
+                            ui.colored_label(threat_color, conn.threat_score.to_string());
+                        });
+                    });
 
-                // Subtle row separator
-                ui.add_space(1.0);
-                ui.separator();
-                ui.add_space(1.0);
+                ui.add_space(2.0);
             }
         });
 
@@ -298,7 +427,7 @@ impl App {
 
     fn render_process_tree(&mut self, ui: &mut egui::Ui) {
         let connections = self.monitor_state.connections.lock().unwrap();
-        let processes = crate::state::ProcessTreeItem::from_connections(&connections);
+        let mut processes: Vec<crate::state::ProcessTreeItem> = crate::state::ProcessTreeItem::from_connections(&connections);
 
         if processes.is_empty() {
             let conn_count = connections.len();
@@ -314,6 +443,44 @@ impl App {
             return;
         }
 
+        // Apply filter
+        processes.retain(|proc| {
+            let mut matches = true;
+            if !self.filter.process_name.is_empty() {
+                if !proc.name.to_lowercase().contains(&self.filter.process_name.to_lowercase()) {
+                    matches = false;
+                }
+            }
+            if let Some(pid) = self.filter.pid {
+                if proc.pid != pid {
+                    matches = false;
+                }
+            }
+            if self.filter.only_suspicious && !proc.is_suspicious {
+                matches = false;
+            }
+            if proc.total_threat_score < self.filter.min_threat_score || proc.total_threat_score > self.filter.max_threat_score {
+                matches = false;
+            }
+            matches
+        });
+
+        // Sort processes
+        processes.sort_by(|a, b| {
+            let ordering = match self.proc_sort_field {
+                SortField::Process => a.name.cmp(&b.name),
+                SortField::Pid => a.pid.cmp(&b.pid),
+                SortField::Connections => a.connections.len().cmp(&b.connections.len()),
+                SortField::ThreatScore => a.total_threat_score.cmp(&b.total_threat_score),
+                SortField::Status => a.is_suspicious.cmp(&b.is_suspicious).reverse(), // suspicious first
+                _ => a.name.cmp(&b.name),
+            };
+            match self.proc_sort_dir {
+                SortDir::Asc => ordering,
+                SortDir::Desc => ordering.reverse(),
+            }
+        });
+
         ui.heading(egui::RichText::new("Process Network Tree").color(ORANGE));
         ui.separator();
 
@@ -323,49 +490,72 @@ impl App {
         ui.separator();
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            // Header row
+            // Sortable header row — click to toggle sort
             ui.horizontal(|ui| {
                 ui.add_space(2.0);
-                ui.label(egui::RichText::new("Sel").color(ORANGE).strong());
+
+                // Sel column
+                if ui.small_button("Sel").clicked() {
+                    // No sort for selection column
+                }
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new("Process").color(ORANGE).strong());
+
+                // Process
+                if self.proc_sort_field == SortField::Process {
+                    ui.label(egui::RichText::new(format!("Process {}", self.proc_sort_dir.icon())).color(ORANGE).strong());
+                } else if ui.small_button("Process").clicked() {
+                    self.proc_sort_field = SortField::Process;
+                    self.proc_sort_dir = SortDir::Asc;
+                }
                 ui.add_space(16.0);
-                ui.label(egui::RichText::new("PID").color(ORANGE).strong());
+
+                // PID
+                if self.proc_sort_field == SortField::Pid {
+                    ui.label(egui::RichText::new(format!("PID {}", self.proc_sort_dir.icon())).color(ORANGE).strong());
+                } else if ui.small_button("PID").clicked() {
+                    self.proc_sort_field = SortField::Pid;
+                    self.proc_sort_dir = SortDir::Asc;
+                }
                 ui.add_space(16.0);
-                ui.label(egui::RichText::new("User").color(ORANGE).strong());
+
+                // User
+                if self.proc_sort_field == SortField::User {
+                    ui.label(egui::RichText::new(format!("User {}", self.proc_sort_dir.icon())).color(ORANGE).strong());
+                } else if ui.small_button("User").clicked() {
+                    self.proc_sort_field = SortField::User;
+                    self.proc_sort_dir = SortDir::Asc;
+                }
                 ui.add_space(16.0);
-                ui.label(egui::RichText::new("Connections").color(ORANGE).strong());
+
+                // Connections
+                if self.proc_sort_field == SortField::Connections {
+                    ui.label(egui::RichText::new(format!("Connections {}", self.proc_sort_dir.icon())).color(ORANGE).strong());
+                } else if ui.small_button("Connections").clicked() {
+                    self.proc_sort_field = SortField::Connections;
+                    self.proc_sort_dir = SortDir::Asc;
+                }
                 ui.add_space(16.0);
-                ui.label(egui::RichText::new("Max Threat").color(ORANGE).strong());
+
+                // Max Threat
+                if self.proc_sort_field == SortField::ThreatScore {
+                    ui.label(egui::RichText::new(format!("Max Threat {}", self.proc_sort_dir.icon())).color(ORANGE).strong());
+                } else if ui.small_button("Max Threat").clicked() {
+                    self.proc_sort_field = SortField::ThreatScore;
+                    self.proc_sort_dir = SortDir::Asc;
+                }
                 ui.add_space(16.0);
-                ui.label(egui::RichText::new("Status").color(ORANGE).strong());
+
+                // Status
+                if self.proc_sort_field == SortField::Status {
+                    ui.label(egui::RichText::new(format!("Status {}", self.proc_sort_dir.icon())).color(ORANGE).strong());
+                } else if ui.small_button("Status").clicked() {
+                    self.proc_sort_field = SortField::Status;
+                    self.proc_sort_dir = SortDir::Asc;
+                }
             });
             ui.separator();
 
             for proc in processes {
-                // Apply filter
-                let mut matches = true;
-                if !self.filter.process_name.is_empty() {
-                    if !proc.name.to_lowercase().contains(&self.filter.process_name.to_lowercase()) {
-                        matches = false;
-                    }
-                }
-                if let Some(pid) = self.filter.pid {
-                    if proc.pid != pid {
-                        matches = false;
-                    }
-                }
-                if self.filter.only_suspicious && !proc.is_suspicious {
-                    matches = false;
-                }
-                if proc.total_threat_score < self.filter.min_threat_score || proc.total_threat_score > self.filter.max_threat_score {
-                    matches = false;
-                }
-
-                if !matches {
-                    continue;
-                }
-
                 let threat_color = match proc.total_threat_score {
                     0..=25 => GREEN,
                     26..=49 => YELLOW,
@@ -389,29 +579,35 @@ impl App {
                     DARK_BG
                 };
 
-                ui.horizontal(|ui| {
-                    ui.add_space(2.0);
+                egui::Frame::none()
+                    .fill(bg_color)
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(40, 40, 40)))
+                    .inner_margin(4.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add_space(2.0);
 
-                    let btn_text = if is_selected { "[Selected]" } else { "[Select]" };
-                    if ui.small_button(btn_text).clicked() {
-                        self.selected_process = Some(proc.pid);
-                        self.details_selected_pid = Some(proc.pid);
-                        self.details_selected_tab = Tab::ProcessTree;
-                    }
-                    ui.add_space(8.0);
+                            let btn_text = if is_selected { "[Selected]" } else { "[Select]" };
+                            if ui.small_button(btn_text).clicked() {
+                                self.selected_process = Some(proc.pid);
+                                self.details_selected_pid = Some(proc.pid);
+                                self.details_selected_tab = Tab::ProcessTree;
+                            }
+                            ui.add_space(8.0);
 
-                    ui.label(&process_display);
-                    ui.add_space(16.0);
-                    ui.label(proc.pid.to_string());
-                    ui.add_space(16.0);
-                    ui.label(proc.user.as_deref().unwrap_or("N/A"));
-                    ui.add_space(16.0);
-                    ui.label(proc.connections.len().to_string());
-                    ui.add_space(16.0);
-                    ui.colored_label(threat_color, proc.total_threat_score.to_string());
-                    ui.add_space(16.0);
-                    ui.colored_label(threat_color, if proc.is_suspicious { "SUSPICIOUS" } else { "OK" });
-                });
+                            ui.label(&process_display);
+                            ui.add_space(16.0);
+                            ui.label(proc.pid.to_string());
+                            ui.add_space(16.0);
+                            ui.label(proc.user.as_deref().unwrap_or("N/A"));
+                            ui.add_space(16.0);
+                            ui.label(proc.connections.len().to_string());
+                            ui.add_space(16.0);
+                            ui.colored_label(threat_color, proc.total_threat_score.to_string());
+                            ui.add_space(16.0);
+                            ui.colored_label(threat_color, if proc.is_suspicious { "SUSPICIOUS" } else { "OK" });
+                        });
+                    });
 
                 ui.add_space(1.0);
                 ui.separator();
@@ -841,6 +1037,15 @@ impl eframe::App for App {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_space(20.0);
+                    let details_text = if self.show_details_pane {
+                        "[Hide Details]"
+                    } else {
+                        "[Show Details]"
+                    };
+                    if ui.button(details_text).clicked() {
+                        self.show_details_pane = !self.show_details_pane;
+                    }
+                    ui.add_space(8.0);
                     if ui.button("Quit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -882,13 +1087,15 @@ impl eframe::App for App {
         });
 
         // Details pane on right side - resizable, shows details top-to-bottom per tab
-        egui::SidePanel::right("details_pane")
-            .min_width(280.0)
-            .max_width(500.0)
-            .resizable(true)
-            .show(ctx, |ui| {
-                self.render_details_pane(ui);
-            });
+        if self.show_details_pane {
+            egui::SidePanel::right("details_pane")
+                .min_width(280.0)
+                .max_width(500.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    self.render_details_pane(ui);
+                });
+        }
 
         // Main content area
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -945,6 +1152,11 @@ pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
             details_selected_index: None,
             details_selected_pid: None,
             details_selected_node: None,
+            show_details_pane: true,
+            conn_sort_field: SortField::Time,
+            conn_sort_dir: SortDir::Desc,
+            proc_sort_field: SortField::Process,
+            proc_sort_dir: SortDir::Asc,
         };
 
         eframe::run_native(
