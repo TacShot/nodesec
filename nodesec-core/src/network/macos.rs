@@ -168,7 +168,7 @@ impl MacOSNetworkMonitor {
             let user = parts[2].to_string();
 
             // lsof -i output: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
-            let name = parts[9..].join(" ");
+let name = parts[8..].join(" ");
 
             // Parse local and remote addresses from NAME field
             if let Some(mut process_info) = self.parse_lsof_name(&name, pid, &process_name, &user) {
@@ -622,7 +622,7 @@ impl MacOSNetworkMonitor {
             };
             let user = parts[2].to_string();
 
-            let name = parts[9..].join(" ");
+let name = parts[8..].join(" ");
 
             if let Some(mut process_info) = self.parse_lsof_name(&name, pid, &process_name, &user) {
                 // Enrich with ps data if available

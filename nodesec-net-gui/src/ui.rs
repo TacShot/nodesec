@@ -651,18 +651,32 @@ pub fn render_settings(
                         ui.label(format!("Protocol: {:?}", proto));
                     }
                     
-                    // Editable fields
+                    // Editable fields - always show so user can enter values
                     if let Some(name) = rule.process_name.as_mut() {
-                        if !name.is_empty() {
-                            ui.label("Edit name:");
-                            ui.text_edit_singleline(name);
-                        }
+                        ui.label("Process name:");
+                        ui.text_edit_singleline(name);
                     }
                     if let Some(path) = rule.process_path.as_mut() {
-                        if !path.is_empty() {
-                            ui.label("Edit path:");
-                            ui.text_edit_singleline(path);
+                        ui.label("Process path:");
+                        ui.text_edit_singleline(path);
+                    }
+                    if let Some(pid) = rule.pid {
+                        if pid > 0 {
+                            ui.label(format!("PID: {}", pid));
                         }
+                    }
+                    if let Some(port) = rule.port {
+                        if port > 0 {
+                            ui.label(format!("Port: {}", port));
+                        }
+                    }
+                    if let Some(ip) = &rule.ip {
+                        if !ip.is_empty() {
+                            ui.label(format!("IP: {}", ip));
+                        }
+                    }
+                    if let Some(proto) = &rule.protocol {
+                        ui.label(format!("Protocol: {:?}", proto));
                     }
                     
                     if ui.button("[Remove]").clicked() {
@@ -975,6 +989,11 @@ pub fn render_process_tree(ui: &mut egui::Ui, monitor_state: &crate::state::Moni
 pub fn render_connection_graph(ui: &mut egui::Ui, graph: &mut crate::graph::ConnectionGraph, monitor_state: &crate::state::MonitorState) {
     ui.heading(egui::RichText::new("Connection Graph").color(ORANGE));
     ui.separator();
+    
+    // Update graph with current connections
+    let connections = monitor_state.connections.lock().unwrap();
+    graph.update(&connections);
+    drop(connections);
     
     let rect = ui.available_rect_before_wrap();
     graph.render(ui, rect);

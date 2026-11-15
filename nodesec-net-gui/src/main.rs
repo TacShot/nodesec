@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use std::collections::VecDeque;
 use tokio::runtime;
 use nodesec_core::models::Platform;
+use serde_json::{Map, Value};
 use nodesec_core::audit::AuditEngine;
 
 mod state;
@@ -495,12 +496,12 @@ impl App {
             return;
         }
 
-        // Group by process - show ALL connections including unknown PIDs
+        // Group by process - unknown PIDs grouped together under single key
         use std::collections::HashMap;
         let mut process_map: HashMap<String, Vec<&crate::state::ConnectionItem>> = HashMap::new();
         for item in &connections {
-            let key = if item.connection.pid == 0 && item.connection.process_name == "unknown" {
-                format!("unknown:{}", item.connection.src_port)
+            let key = if item.connection.pid == 0 || item.connection.process_name == "unknown" {
+                "unknown:0".to_string() // All unknown PIDs grouped together
             } else {
                 format!("{}:{}", item.connection.pid, item.connection.process_name)
             };
@@ -596,7 +597,11 @@ impl App {
                 let cx = cell_rect.center().x;
                 let ty = cell_rect.top() + 8.0;
 
-                let display_name = key.split(':').nth(1).unwrap_or(&key).to_string();
+                let display_name = if pid == 0 {
+                    "Unknown Process".to_string()
+                } else {
+                    key.split(':').nth(1).unwrap_or(&key).to_string()
+                };
 
                 ui.painter().text(
                     egui::pos2(cx, ty),
@@ -748,7 +753,7 @@ impl App {
         }
 
         // Draw cells using painter (avoids clipping issues with ui.label)
-        let mut cell_rects: Vec<(egui::Rect, usize)> = Vec::new();
+        let mut cell_rects: Vec<(egui::Rect, String)> = Vec::new();
 
         let mut y = cell_spacing;
         let center_x = available.min.x + available.width() / 2.0 - cell_width / 2.0 + offset.x;
@@ -786,7 +791,12 @@ impl App {
             );
 
             // Draw text using painter (no clipping issues)
-            let display_name = key.split(':').nth(1).unwrap_or(&key).to_string();
+            let cell_pid: u32 = key.split(':').next().unwrap_or(&"0").parse().unwrap_or(0);
+            let display_name = if cell_pid == 0 {
+                "Unknown Process".to_string()
+            } else {
+                key.split(':').nth(1).unwrap_or(&key).to_string()
+            };
 
             // Name
             ui.painter().text(
@@ -800,7 +810,7 @@ impl App {
             ui.painter().text(
                 egui::pos2(center_x + cell_width / 2.0, y_offset + y + 34.0),
                 egui::Align2::CENTER_CENTER,
-                &format!("PID: {}", key.split(':').next().unwrap_or(&"0")),
+                &format!("PID: {}", cell_pid),
                 egui::FontId::new(10.0, egui::FontFamily::Proportional),
                 GRAY,
             );
@@ -821,22 +831,31 @@ impl App {
                 *cell_color,
             );
 
-            cell_rects.push((cell_rect, i));
+            cell_rects.push((cell_rect, key.clone()));
 
             y += cell_height + cell_spacing;
         }
 
         // Clickable overlays for each cell
-        for (i, (cell_rect, _)) in cell_rects.iter().enumerate() {
+        for (i, (cell_rect, cell_key)) in cell_rects.iter().enumerate() {
+            let cell_pid: u32 = cell_key.split(':').next().unwrap_or(&"0").parse().unwrap_or(0);
+            let widget_id = format!("cg_cell_{}_{}", i, cell_pid);
             let response = ui.interact(
                 *cell_rect,
-                ui.id().with(format!("cg_cell_{}", i)),
+                ui.id().with(widget_id),
                 egui::Sense::click(),
             );
             if response.clicked() {
                 self.details_selected_node = Some(format!("cell_{}", i));
                 self.details_selected_tab = Tab::ConnectionGraph;
-                self.details_selected_conn = Some(connections[0].connection.clone());
+                // Find the first connection for this cell's process
+                if let Some(item) = connections.iter().find(|item| {
+                    let c = &item.connection;
+                    let k = format!("{}:{}", c.pid, c.process_name);
+                    k == *cell_key
+                }) {
+                    self.details_selected_conn = Some(item.connection.clone());
+                }
             }
         }
 
@@ -1870,70 +1889,135 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
     #[cfg(target_os = "macos")]
     {
         let mut devices = Vec::new();
-        
-        // USB devices
+
+        // USB devices using system_profiler with recursive hub traversal
         if let Ok(output) = std::process::Command::new("system_profiler").args(["SPUSBDataType", "-json"]).output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
                 if let Some(items) = json.get("SPUSBDataType").and_then(|v| v.as_array()) {
                     for item in items {
-                        let name = item.get("_name").and_then(|v| v.as_str()).unwrap_or("Unknown USB Device").to_string();
-                        let vendor = item.get("_vendor").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let product_id = item.get("product_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let vendor_id = item.get("vendor_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let serial = item.get("serial_num").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        
-                        devices.push(nodesec_core::models::ConnectedDevice {
-                            id: format!("usb:{}", vendor_id.as_deref().unwrap_or("unknown")),
-                            name,
-                            device_type: nodesec_core::models::DeviceType::Usb,
-                            vendor,
-                            product_id,
-                            vendor_id,
-                            serial_number: serial,
-                            connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
-                            last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
-                            is_connected: true,
-                        });
+                        extract_usb_from_json_recursive(&item, &mut devices);
                     }
                 }
             }
         }
-        
-        // Bluetooth devices
+
+        // Fallback to ioreg if system_profiler returns empty
+        if devices.is_empty() {
+            if let Ok(output) = std::process::Command::new("ioreg").args(["-r", "-c", "IOUSBDevice", "-a"]).output() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let mut current_name = String::new();
+                let mut current_vendor_id: Option<String> = None;
+                let mut current_product_id: Option<String> = None;
+                let mut current_serial: Option<String> = None;
+
+                for line in stdout.lines() {
+                    let line = line.trim();
+                    if line.contains("\"USB Product Name\"") {
+                        if let Some(start) = line.find('=') {
+                            let val = line[start+1..].trim().trim_matches('"');
+                            if !val.is_empty() && val != "0" {
+                                current_name = val.to_string();
+                            }
+                        }
+                    } else if line.contains("\"idVendor\"") {
+                        if let Some(start) = line.find('=') {
+                            current_vendor_id = Some(line[start+1..].trim().trim_matches('"').to_string());
+                        }
+                    } else if line.contains("\"idProduct\"") {
+                        if let Some(start) = line.find('=') {
+                            current_product_id = Some(line[start+1..].trim().trim_matches('"').to_string());
+                        }
+                    } else if line.contains("\"USB Serial Number\"") {
+                        if let Some(start) = line.find('=') {
+                            current_serial = Some(line[start+1..].trim().trim_matches('"').to_string());
+                        }
+                    } else if line.contains("IOUSBDevice") && !current_name.is_empty() {
+                        if let (Some(vid), Some(pid)) = (&current_vendor_id, &current_product_id) {
+                            devices.push(nodesec_core::models::ConnectedDevice {
+                                id: format!("usb:{}:{}", vid, pid),
+                                name: current_name.clone(),
+                                device_type: nodesec_core::models::DeviceType::Usb,
+                                vendor: None,
+                                product_id: Some(pid.clone()),
+                                vendor_id: Some(vid.clone()),
+                                serial_number: current_serial.clone(),
+                                connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                                last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                                is_connected: true,
+                            });
+                        }
+                        current_name.clear();
+                        current_vendor_id = None;
+                        current_product_id = None;
+                        current_serial = None;
+                    }
+                }
+            }
+        }
+
+        // Bluetooth devices using system_profiler (correct JSON structure)
         if let Ok(output) = std::process::Command::new("system_profiler").args(["SPBluetoothDataType", "-json"]).output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
                 if let Some(items) = json.get("SPBluetoothDataType").and_then(|v| v.as_array()) {
                     for item in items {
-                        let name = item.get("_name").and_then(|v| v.as_str()).unwrap_or("Unknown Bluetooth Device").to_string();
-                        let address = item.get("device_address").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let connected = item.get("device_connected").and_then(|v| v.as_bool()).unwrap_or(false);
-                        
-                        devices.push(nodesec_core::models::ConnectedDevice {
-                            id: format!("bt:{}", address.as_deref().unwrap_or("unknown")),
-                            name,
-                            device_type: nodesec_core::models::DeviceType::Bluetooth,
-                            vendor: None,
-                            product_id: None,
-                            vendor_id: None,
-                            serial_number: address,
-                            connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
-                            last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
-                            is_connected: connected,
-                        });
+                        // Connected devices - each entry is {"Device Name": {properties}}
+                        if let Some(connected_list) = item.get("device_connected").and_then(|v| v.as_array()) {
+                            for dev_entry in connected_list {
+                                for (dev_name, dev_props) in dev_entry.as_object().unwrap_or(&serde_json::Map::new()) {
+                                    let name = dev_name.clone();
+                                    let address = dev_props.get("device_address").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+                                    devices.push(nodesec_core::models::ConnectedDevice {
+                                        id: format!("bt:{}", address.as_deref().unwrap_or("unknown")),
+                                        name,
+                                        device_type: nodesec_core::models::DeviceType::Bluetooth,
+                                        vendor: None,
+                                        product_id: None,
+                                        vendor_id: None,
+                                        serial_number: address.clone(),
+                                        connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                                        last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                                        is_connected: true,
+                                    });
+                                }
+                            }
+                        }
+                        // Not connected devices (for history)
+                        if let Some(not_connected_list) = item.get("device_not_connected").and_then(|v| v.as_array()) {
+                            for dev_entry in not_connected_list {
+                                for (dev_name, dev_props) in dev_entry.as_object().unwrap_or(&serde_json::Map::new()) {
+                                    let name = dev_name.clone();
+                                    let address = dev_props.get("device_address").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+                                    devices.push(nodesec_core::models::ConnectedDevice {
+                                        id: format!("bt:{}", address.as_deref().unwrap_or("unknown")),
+                                        name,
+                                        device_type: nodesec_core::models::DeviceType::Bluetooth,
+                                        vendor: None,
+                                        product_id: None,
+                                        vendor_id: None,
+                                        serial_number: address,
+                                        connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                                        last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                                        is_connected: false,
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
-        
-        devices
+
+        return devices;
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         let mut devices = Vec::new();
-        
+
         // USB devices via lsusb
         if let Ok(output) = std::process::Command::new("lsusb").output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1948,7 +2032,7 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                         let product_id = id_parts[1].to_string();
                         let id_index = parts.iter().position(|p| *p == id).unwrap_or(0);
                         let name = parts[id_index + 1..].join(" ");
-                        
+
                         devices.push(nodesec_core::models::ConnectedDevice {
                             id: format!("usb:{}:{}", vendor_id, product_id),
                             name,
@@ -1965,7 +2049,7 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                 }
             }
         }
-        
+
         // Bluetooth devices via bluetoothctl
         if let Ok(output) = std::process::Command::new("bluetoothctl").args(["devices"]).output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1974,7 +2058,7 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                 if parts.len() < 3 || parts[0] != "Device" { continue; }
                 let address = parts[1].to_string();
                 let name = parts[2..].join(" ");
-                
+
                 devices.push(nodesec_core::models::ConnectedDevice {
                     id: format!("bt:{}", address),
                     name,
@@ -1989,14 +2073,14 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                 });
             }
         }
-        
-        devices
+
+        return devices;
     }
-    
+
     #[cfg(target_os = "windows")]
     {
         let mut devices = Vec::new();
-        
+
         // USB devices via PowerShell
         if let Ok(output) = std::process::Command::new("powershell")
             .args(["-Command", "Get-PnpDevice -Class USB | Select-Object Name, InstanceId, Status | ConvertTo-Json"])
@@ -2010,7 +2094,7 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                     let status = item.get("Status").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
                     let vid = instance_id.split("VID_").nth(1).and_then(|s| s.split('&').next()).map(|s| s.to_string());
                     let pid = instance_id.split("PID_").nth(1).and_then(|s| s.split('\\').next()).map(|s| s.to_string());
-                    
+
                     devices.push(nodesec_core::models::ConnectedDevice {
                         id: format!("usb:{}", instance_id),
                         name,
@@ -2026,7 +2110,7 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                 }
             }
         }
-        
+
         // Bluetooth devices via PowerShell
         if let Ok(output) = std::process::Command::new("powershell")
             .args(["-Command", "Get-PnpDevice -Class Bluetooth | Select-Object Name, InstanceId, Status | ConvertTo-Json"])
@@ -2038,7 +2122,7 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                     let name = item.get("Name").and_then(|v| v.as_str()).unwrap_or("Unknown Bluetooth Device").to_string();
                     let instance_id = item.get("InstanceId").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
                     let status = item.get("Status").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
-                    
+
                     devices.push(nodesec_core::models::ConnectedDevice {
                         id: format!("bt:{}", instance_id),
                         name,
@@ -2054,12 +2138,44 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                 }
             }
         }
-        
-        devices
+
+        return devices;
     }
-    
+
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         Vec::new()
     }
+}/// Recursively extract USB devices from JSON items (handles USB hubs with _items)
+fn extract_usb_from_json_recursive(item: &serde_json::Value, devices: &mut Vec<nodesec_core::models::ConnectedDevice>) {
+    let name = item.get("_name").and_then(|v| v.as_str()).unwrap_or("Unknown USB Device").to_string();
+    let vendor = item.get("_vendor").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let product_id = item.get("product_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let vendor_id = item.get("vendor_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let serial = item.get("serial_num").and_then(|v| v.as_str()).map(|s| s.to_string());
+    
+    let is_hub = name.to_lowercase().contains("hub") || vendor_id.is_none();
+    
+    if !is_hub || vendor_id.is_some() {
+        devices.push(nodesec_core::models::ConnectedDevice {
+            id: format!("usb:{}:{}", vendor_id.as_deref().unwrap_or("unknown"), product_id.as_deref().unwrap_or("unknown")),
+            name,
+            device_type: nodesec_core::models::DeviceType::Usb,
+            vendor,
+            product_id,
+            vendor_id,
+            serial_number: serial,
+            connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+            last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+            is_connected: true,
+        });
+    }
+    
+    // Recurse into _items (devices connected through hubs)
+    if let Some(sub_items) = item.get("_items").and_then(|v| v.as_array()) {
+        for sub in sub_items {
+            extract_usb_from_json_recursive(sub, devices);
+        }
+    }
 }
+
