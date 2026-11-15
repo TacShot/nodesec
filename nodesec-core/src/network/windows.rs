@@ -561,3 +561,140 @@ impl WindowsNetworkMonitor {
         self.scan_connections().await
     }
 }
+
+impl WindowsNetworkMonitor {
+    /// Enumerate USB devices using PowerShell on Windows
+    pub fn enumerate_usb_devices(&self) -> Vec<crate::models::ConnectedDevice> {
+        #[cfg(target_os = "windows")]
+        {
+            let mut devices = Vec::new();
+            
+            let output = match std::process::Command::new("powershell")
+                .args(["-Command", "Get-PnpDevice -Class USB | Select-Object Name, InstanceId, Status | ConvertTo-Json"])
+                .output()
+            {
+                Ok(o) => o,
+                Err(_) => return devices,
+            };
+            
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
+                for item in json_array {
+                    let name = item.get("Name").and_then(|v| v.as_str()).unwrap_or("Unknown USB Device").to_string();
+                    let instance_id = item.get("InstanceId").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                    let status = item.get("Status").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
+                    
+                    // Extract VID and PID from InstanceId (format: USB\VID_XXXX&PID_XXXX\....)
+                    let vid = instance_id.split("VID_").nth(1).and_then(|s| s.split('&').next()).map(|s| s.to_string());
+                    let pid = instance_id.split("PID_").nth(1).and_then(|s| s.split('\\').next()).map(|s| s.to_string());
+                    
+                    devices.push(crate::models::ConnectedDevice {
+                        id: format!("usb:{}", instance_id),
+                        name,
+                        device_type: crate::models::DeviceType::Usb,
+                        vendor: None,
+                        product_id: pid,
+                        vendor_id: vid,
+                        serial_number: None,
+                        connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        is_connected: status == "OK",
+                    });
+                }
+            }
+            
+            devices
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Vec::new()
+        }
+    }
+
+    /// Enumerate Bluetooth devices using PowerShell on Windows
+    pub fn enumerate_bluetooth_devices(&self) -> Vec<crate::models::ConnectedDevice> {
+        #[cfg(target_os = "windows")]
+        {
+            let mut devices = Vec::new();
+            
+            let output = match std::process::Command::new("powershell")
+                .args(["-Command", "Get-PnpDevice -Class Bluetooth | Select-Object Name, InstanceId, Status | ConvertTo-Json"])
+                .output()
+            {
+                Ok(o) => o,
+                Err(_) => return devices,
+            };
+            
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
+                for item in json_array {
+                    let name = item.get("Name").and_then(|v| v.as_str()).unwrap_or("Unknown Bluetooth Device").to_string();
+                    let instance_id = item.get("InstanceId").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                    let status = item.get("Status").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
+                    
+                    devices.push(crate::models::ConnectedDevice {
+                        id: format!("bt:{}", instance_id),
+                        name,
+                        device_type: crate::models::DeviceType::Bluetooth,
+                        vendor: None,
+                        product_id: None,
+                        vendor_id: None,
+                        serial_number: Some(instance_id),
+                        connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        is_connected: status == "OK",
+                    });
+                }
+            }
+            
+            devices
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Vec::new()
+        }
+    }
+
+    /// Detect virtual machine environments on Windows using registry and WMI
+    pub fn detect_virtual_machine(&self) -> Option<String> {
+        #[cfg(target_os = "windows")]
+        {
+            // Check registry for VM indicators
+            let vm_indicators = [
+                (r"HKLM\SYSTEM\CurrentControlSet\Enum\PCI\VEN_8086&DEV_1237", "VMware"),
+                (r"HKLM\SYSTEM\CurrentControlSet\Enum\PCI\VEN_1AB8&DEV_4000", "Parallels"),
+                (r"HKLM\SYSTEM\CurrentControlSet\Enum\PCI\VEN_0E0F&DEV_0001", "Microsoft Hyper-V"),
+                (r"HKLM\SYSTEM\CurrentControlSet\Enum\PCI\VEN_1AF4&DEV_1000", "Xen"),
+            ];
+            
+            for (reg_path, vm_name) in &vm_indicators {
+                let output = std::process::Command::new("reg")
+                    .args(["QUERY", reg_path])
+                    .output();
+                
+                if let Ok(output) = output {
+                    if output.status.success() {
+                        return Some(format!("VM detected: {}", vm_name));
+                    }
+                }
+            }
+            
+            // Check for VMware Tools
+            if std::path::Path::new(r"C:\\Program Files\\VMware\\VMware Tools").exists() ||
+               std::path::Path::new(r"C:\\Program Files (x86)\\VMware\\VMware Tools").exists() {
+                return Some("VM detected: VMware Tools installed".to_string());
+            }
+            
+            // Check for VirtualBox additions
+            if std::path::Path::new(r"C:\Program Files\Oracle\VirtualBox Guest Additions").exists() {
+                return Some("VM detected: VirtualBox Guest Additions installed".to_string());
+            }
+            
+            None
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            None
+        }
+    }
+}

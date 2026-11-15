@@ -1509,6 +1509,13 @@ pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
         let monitor_state = Arc::new(state::MonitorState::new(Platform::detect()));
         let monitor_state_for_graph = monitor_state.clone();
 
+        // Enumerate connected devices on startup
+        {
+            let devices = enumerate_all_devices_platform();
+            let mut devices_lock = monitor_state.connected_devices.lock().unwrap();
+            *devices_lock = devices;
+        }
+
         let app = App {
             selected_tab: Tab::Dashboard,
             monitor_state,
@@ -1685,3 +1692,202 @@ fn get_process_details_sync(pid: u32) -> (Option<String>, Option<String>) {
 
 #[cfg(not(target_os = "macos"))]
 fn ensure_root_privileges() {}
+
+/// Platform-specific device enumeration (USB + Bluetooth)
+fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut devices = Vec::new();
+        
+        // USB devices
+        if let Ok(output) = std::process::Command::new("system_profiler").args(["SPUSBDataType", "-json"]).output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                if let Some(items) = json.get("SPUSBDataType").and_then(|v| v.as_array()) {
+                    for item in items {
+                        let name = item.get("_name").and_then(|v| v.as_str()).unwrap_or("Unknown USB Device").to_string();
+                        let vendor = item.get("_vendor").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let product_id = item.get("product_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let vendor_id = item.get("vendor_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let serial = item.get("serial_num").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        
+                        devices.push(nodesec_core::models::ConnectedDevice {
+                            id: format!("usb:{}", vendor_id.as_deref().unwrap_or("unknown")),
+                            name,
+                            device_type: nodesec_core::models::DeviceType::Usb,
+                            vendor,
+                            product_id,
+                            vendor_id,
+                            serial_number: serial,
+                            connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                            last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                            is_connected: true,
+                        });
+                    }
+                }
+            }
+        }
+        
+        // Bluetooth devices
+        if let Ok(output) = std::process::Command::new("system_profiler").args(["SPBluetoothDataType", "-json"]).output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                if let Some(items) = json.get("SPBluetoothDataType").and_then(|v| v.as_array()) {
+                    for item in items {
+                        let name = item.get("_name").and_then(|v| v.as_str()).unwrap_or("Unknown Bluetooth Device").to_string();
+                        let address = item.get("device_address").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let connected = item.get("device_connected").and_then(|v| v.as_bool()).unwrap_or(false);
+                        
+                        devices.push(nodesec_core::models::ConnectedDevice {
+                            id: format!("bt:{}", address.as_deref().unwrap_or("unknown")),
+                            name,
+                            device_type: nodesec_core::models::DeviceType::Bluetooth,
+                            vendor: None,
+                            product_id: None,
+                            vendor_id: None,
+                            serial_number: address,
+                            connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                            last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                            is_connected: connected,
+                        });
+                    }
+                }
+            }
+        }
+        
+        devices
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        let mut devices = Vec::new();
+        
+        // USB devices via lsusb
+        if let Ok(output) = std::process::Command::new("lsusb").output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() < 6 { continue; }
+                let id_field = parts.iter().find(|p| p.contains(':') && p.len() == 7 && p.chars().nth(4) == Some(':'));
+                if let Some(id) = id_field {
+                    let id_parts: Vec<&str> = id.split(':').collect();
+                    if id_parts.len() == 2 {
+                        let vendor_id = id_parts[0].to_string();
+                        let product_id = id_parts[1].to_string();
+                        let id_index = parts.iter().position(|p| *p == id).unwrap_or(0);
+                        let name = parts[id_index + 1..].join(" ");
+                        
+                        devices.push(nodesec_core::models::ConnectedDevice {
+                            id: format!("usb:{}:{}", vendor_id, product_id),
+                            name,
+                            device_type: nodesec_core::models::DeviceType::Usb,
+                            vendor: None,
+                            product_id: Some(product_id),
+                            vendor_id: Some(vendor_id),
+                            serial_number: None,
+                            connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                            last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                            is_connected: true,
+                        });
+                    }
+                }
+            }
+        }
+        
+        // Bluetooth devices via bluetoothctl
+        if let Ok(output) = std::process::Command::new("bluetoothctl").args(["devices"]).output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() < 3 || parts[0] != "Device" { continue; }
+                let address = parts[1].to_string();
+                let name = parts[2..].join(" ");
+                
+                devices.push(nodesec_core::models::ConnectedDevice {
+                    id: format!("bt:{}", address),
+                    name,
+                    device_type: nodesec_core::models::DeviceType::Bluetooth,
+                    vendor: None,
+                    product_id: None,
+                    vendor_id: None,
+                    serial_number: Some(address),
+                    connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                    last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                    is_connected: true,
+                });
+            }
+        }
+        
+        devices
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        let mut devices = Vec::new();
+        
+        // USB devices via PowerShell
+        if let Ok(output) = std::process::Command::new("powershell")
+            .args(["-Command", "Get-PnpDevice -Class USB | Select-Object Name, InstanceId, Status | ConvertTo-Json"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
+                for item in json_array {
+                    let name = item.get("Name").and_then(|v| v.as_str()).unwrap_or("Unknown USB Device").to_string();
+                    let instance_id = item.get("InstanceId").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                    let status = item.get("Status").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
+                    let vid = instance_id.split("VID_").nth(1).and_then(|s| s.split('&').next()).map(|s| s.to_string());
+                    let pid = instance_id.split("PID_").nth(1).and_then(|s| s.split('\\').next()).map(|s| s.to_string());
+                    
+                    devices.push(nodesec_core::models::ConnectedDevice {
+                        id: format!("usb:{}", instance_id),
+                        name,
+                        device_type: nodesec_core::models::DeviceType::Usb,
+                        vendor: None,
+                        product_id: pid,
+                        vendor_id: vid,
+                        serial_number: None,
+                        connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        is_connected: status == "OK",
+                    });
+                }
+            }
+        }
+        
+        // Bluetooth devices via PowerShell
+        if let Ok(output) = std::process::Command::new("powershell")
+            .args(["-Command", "Get-PnpDevice -Class Bluetooth | Select-Object Name, InstanceId, Status | ConvertTo-Json"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
+                for item in json_array {
+                    let name = item.get("Name").and_then(|v| v.as_str()).unwrap_or("Unknown Bluetooth Device").to_string();
+                    let instance_id = item.get("InstanceId").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                    let status = item.get("Status").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
+                    
+                    devices.push(nodesec_core::models::ConnectedDevice {
+                        id: format!("bt:{}", instance_id),
+                        name,
+                        device_type: nodesec_core::models::DeviceType::Bluetooth,
+                        vendor: None,
+                        product_id: None,
+                        vendor_id: None,
+                        serial_number: Some(instance_id),
+                        connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        is_connected: status == "OK",
+                    });
+                }
+            }
+        }
+        
+        devices
+    }
+    
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        Vec::new()
+    }
+}

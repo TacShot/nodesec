@@ -673,4 +673,36 @@ impl MacOSNetworkMonitor {
         devices.extend(self.enumerate_bluetooth_devices());
         devices
     }
+
+    /// Detect virtual machine environments on macOS
+    pub fn detect_virtual_machine(&self) -> Option<String> {
+        // Check system_profiler for VM indicators
+        if let Ok(output) = std::process::Command::new("system_profiler").args(["SPHardwareDataType"]).output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("VMware") || stdout.contains("VirtualBox") || stdout.contains("Parallels") || stdout.contains("QEMU") {
+                return Some("VM detected via system_profiler".to_string());
+            }
+        }
+
+        // Check for VM guest tools
+        if std::path::Path::new("/Library/Application Support/VMware Tools").exists() {
+            return Some("VM detected: VMware Tools".to_string());
+        }
+        if std::path::Path::new("/Library/Application Support/VirtualBox").exists() {
+            return Some("VM detected: VirtualBox".to_string());
+        }
+        if std::path::Path::new("/Library/Parallels").exists() {
+            return Some("VM detected: Parallels".to_string());
+        }
+
+        // Check sysctl for hypervisor
+        if let Ok(output) = std::process::Command::new("sysctl").args(["kern.hv_vmm_present"]).output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("1") {
+                return Some("VM detected: hypervisor present via sysctl".to_string());
+            }
+        }
+
+        None
+    }
 }

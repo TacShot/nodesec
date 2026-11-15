@@ -392,4 +392,126 @@ impl LinuxNetworkMonitor {
     pub async fn scan_once(&self) -> Result<()> {
         self.scan_connections().await
     }
+
+    /// Enumerate USB devices using lsusb
+    pub fn enumerate_usb_devices(&self) -> Vec<crate::models::ConnectedDevice> {
+        let mut devices = Vec::new();
+        
+        let output = match std::process::Command::new("lsusb").output() {
+            Ok(o) => o,
+            Err(_) => return devices,
+        };
+        
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            // lsusb format: Bus 001 Device 003: ID 046d:c52b Logitech, Inc. Unifying Receiver
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 6 {
+                continue;
+            }
+            
+            // Find the ID field (format: xxxx:yyyy)
+            let id_field = parts.iter().find(|p| p.contains(':') && p.len() == 7 && p.chars().nth(4) == Some(':'));
+            if let Some(id) = id_field {
+                let id_parts: Vec<&str> = id.split(':').collect();
+                if id_parts.len() == 2 {
+                    let vendor_id = id_parts[0].to_string();
+                    let product_id = id_parts[1].to_string();
+                    
+                    // Everything after the ID is the device name
+                    let id_index = parts.iter().position(|p| *p == *id).unwrap_or(0);
+                    let name = parts[id_index + 1..].join(" ");
+                    
+                    devices.push(crate::models::ConnectedDevice {
+                        id: format!("usb:{}:{}", vendor_id, product_id),
+                        name,
+                        device_type: crate::models::DeviceType::Usb,
+                        vendor: None,
+                        product_id: Some(product_id),
+                        vendor_id: Some(vendor_id),
+                        serial_number: None,
+                        connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                        is_connected: true,
+                    });
+                }
+            }
+        }
+        
+        devices
+    }
+
+    /// Enumerate Bluetooth devices using bluetoothctl
+    pub fn enumerate_bluetooth_devices(&self) -> Vec<crate::models::ConnectedDevice> {
+        let mut devices = Vec::new();
+        
+        let output = match std::process::Command::new("bluetoothctl").args(["devices"]).output() {
+            Ok(o) => o,
+            Err(_) => return devices,
+        };
+        
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            // bluetoothctl devices format: Device XX:XX:XX:XX:XX:XX Device Name
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 3 {
+                continue;
+            }
+            
+            if parts[0] == "Device" {
+                let address = parts[1].to_string();
+                let name = parts[2..].join(" ");
+                
+                devices.push(crate::models::ConnectedDevice {
+                    id: format!("bt:{}", address),
+                    name,
+                    device_type: crate::models::DeviceType::Bluetooth,
+                    vendor: None,
+                    product_id: None,
+                    vendor_id: None,
+                    serial_number: Some(address),
+                    connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                    last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                    is_connected: true,
+                });
+            }
+        }
+        
+        devices
+    }
+
+    /// Detect virtual machine environments on Linux
+    pub fn detect_virtual_machine(&self) -> Option<String> {
+        // Check /sys/class/dmi/id/sys_vendor
+        if let Ok(vendor) = std::fs::read_to_string("/sys/class/dmi/id/sys_vendor") {
+            let vendor = vendor.trim();
+            if vendor.contains("VMware") || vendor.contains("QEMU") || vendor.contains("Xen") || vendor.contains("KVM") || vendor.contains("Microsoft") {
+                return Some(format!("VM detected: {}", vendor));
+            }
+        }
+        
+        // Check /sys/class/dmi/id/product_name
+        if let Ok(product) = std::fs::read_to_string("/sys/class/dmi/id/product_name") {
+            let product = product.trim();
+            if product.contains("VirtualBox") || product.contains("VMware") || product.contains("QEMU") {
+                return Some(format!("VM detected: {}", product));
+            }
+        }
+        
+        // Check /proc/cpuinfo for hypervisor flag
+        if let Ok(cpuinfo) = std::fs::read_to_string("/proc/cpuinfo") {
+            if cpuinfo.contains("hypervisor") {
+                return Some("VM detected: hypervisor flag in /proc/cpuinfo".to_string());
+            }
+        }
+        
+        // Check for VM kernel modules
+        if let Ok(modules) = std::fs::read_to_string("/proc/modules") {
+            if modules.contains("vboxguest") || modules.contains("vmw_balloon") || modules.contains("vmwgfx") {
+                return Some("VM detected: VM guest kernel modules loaded".to_string());
+            }
+        }
+        
+        None
+    }
 }

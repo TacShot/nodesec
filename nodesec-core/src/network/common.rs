@@ -44,4 +44,29 @@ pub trait NetworkMonitor: Send + Sync {
         let mut events = events_arc.lock().await;
         events.drain(..).collect()
     }
+
+    /// Enumerate USB devices
+    fn enumerate_usb_devices(&self) -> Vec<crate::models::ConnectedDevice> {
+        let _ = ();
+        Vec::new()
+    }
+
+    /// Enumerate Bluetooth devices
+    fn enumerate_bluetooth_devices(&self) -> Vec<crate::models::ConnectedDevice> {
+        let _ = ();
+        Vec::new()
+    }
+
+    /// Enumerate all connected devices (USB + Bluetooth + etc.)
+    fn enumerate_all_devices(&self) -> Vec<crate::models::ConnectedDevice> {
+        let mut devices = self.enumerate_usb_devices();
+        devices.extend(self.enumerate_bluetooth_devices());
+        devices
+    }
+
+    /// Detect virtual machine environments
+    fn detect_virtual_machine(&self) -> Option<String> {
+        let _ = ();
+        None
+    }
 }
