@@ -672,11 +672,12 @@ impl App {
     }
 
     fn render_connection_graph(&mut self, ui: &mut egui::Ui) {
-        // Cell-based graph: each connection is a cell, lines connect related cells
+        // Cell-based graph: rounded rectangles (cells) connected by lines
+        // Top-down layout with ample space between cells (like image 3/4 style)
         ui.heading(egui::RichText::new("Connection Graph (Cell View)").color(ORANGE));
         ui.separator();
 
-        ui.label(egui::RichText::new("Cells = connections • Lines = related connections • Click cell for details").color(GRAY).size(11.0));
+        ui.label(egui::RichText::new("Cells = processes • Lines = shared connections • Click cell for details").color(GRAY).size(11.0));
         ui.separator();
 
         let connections: Vec<crate::state::ConnectionItem> = self
@@ -696,127 +697,127 @@ impl App {
             return;
         }
 
-        // Build cell layout: group by source IP:port, each group is a cell cluster
-        let available = ui.available_rect_before_wrap();
-        let cell_width = 150.0;
-        let cell_height = 90.0;
-        let padding = 20.0;
-
-        // Simple grid layout for cells
-        let cols = (available.width() / (cell_width + padding)).max(1.0) as usize;
-        let rows = ((connections.len() as f32) / (cols as f32)).ceil() as usize;
-
-        // Track cell positions for drawing lines
-        let mut cell_positions: Vec<(egui::Pos2, usize)> = Vec::new();
-
-        // Draw connection lines first (behind cells)
-        let mut line_pairs: Vec<(egui::Pos2, egui::Pos2, egui::Color32)> = Vec::new();
-
-        // Calculate positions
-        for (i, item) in connections.iter().enumerate() {
-            let row = i / cols;
-            let col = i % cols;
-            let x = available.min.x + padding + col as f32 * (cell_width + padding);
-            let y = available.min.y + padding + row as f32 * (cell_height + padding);
-            let pos = egui::Pos2::new(x, y);
-            cell_positions.push((pos, i));
+        // Group connections by process (pid + name) to create process cells
+        use std::collections::HashMap;
+        let mut process_cells: HashMap<String, Vec<&crate::state::ConnectionItem>> = HashMap::new();
+        for item in &connections {
+            let key = if item.connection.pid == 0 && item.connection.process_name == "unknown" {
+                format!("unknown:{}", item.connection.src_port)
+            } else {
+                format!("{}:{}", item.connection.pid, item.connection.process_name)
+            };
+            process_cells.entry(key).or_default().push(item);
         }
 
-        // Draw lines between connections sharing the same source or destination
-        for i in 0..connections.len() {
-            for j in (i + 1)..connections.len() {
-                let a = &connections[i];
-                let b = &connections[j];
-                let related = a.connection.src_ip == b.connection.src_ip
-                    || a.connection.dst_ip == b.connection.dst_ip
-                    || a.connection.src_port == b.connection.src_port
-                    || a.connection.dst_port == b.connection.dst_port;
-                if related {
-                    if let Some((pos_a, _)) = cell_positions.get(i) {
-                        if let Some((pos_b, _)) = cell_positions.get(j) {
-                            let threat_color = if a.connection.threat_score > 50 || b.connection.threat_score > 50 {
-                                RED
-                            } else {
-                                GRAY
-                            };
-                            line_pairs.push((*pos_a, *pos_b, threat_color));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Paint lines using a custom paint callback
-        let line_pairs_clone = line_pairs.clone();
-        ui.painter().add(egui::PaintCallback {
-            rect: available,
-            callback: std::sync::Arc::new(move |_info: &egui::PaintCallbackInfo, painter: &egui::Painter| {
-                for (p1, p2, color) in &line_pairs_clone {
-                    // Offset to start from cell edges
-                    let dir = (*p2 - *p1).normalized();
-                    let start = *p1 + dir * (cell_width / 2.0);
-                    let end = *p2 - dir * (cell_width / 2.0);
-                    painter.line_segment([start, end], egui::Stroke::new(1.5, *color));
-                }
-            }),
-        });
-
-        // Draw cells (no Grid — Grid crashes with interactive widgets)
-        egui::ScrollArea::both().show(ui, |ui| {
-            ui.set_min_size(egui::vec2(available.width(), (rows as f32 * (cell_height + padding)) + padding * 2.0));
-
-            for (i, item) in connections.iter().enumerate() {
-                let conn = &item.connection;
-                let threat_color = item.threat_level.color();
-
-                let src = format!("{}:{}", conn.src_ip, conn.src_port);
-                let dst = format!("{}:{}", conn.dst_ip, conn.dst_port);
-                let proto = format!("{:?}", conn.protocol);
-
-                let display_name = if conn.process_name.is_empty() {
-                    "unknown".to_string()
-                } else {
-                    conn.process_name.clone()
+        let mut cells: Vec<(String, Vec<&crate::state::ConnectionItem>, egui::Color32)> = process_cells
+            .into_iter()
+            .map(|(key, conns)| {
+                let max_threat = conns.iter().map(|c| c.connection.threat_score).max().unwrap_or(0);
+                let color = match max_threat {
+                    0..=25 => GREEN,
+                    26..=49 => YELLOW,
+                    50..=74 => ORANGE,
+                    75..=89 => egui::Color32::from_rgb(255, 100, 100),
+                    _ => RED,
                 };
+                (key, conns, color)
+            })
+            .collect();
 
-                let is_selected = self.details_selected_node == Some(format!("conn_{}", i));
+        // Sort cells by threat score descending
+        cells.sort_by(|a, b| b.1.iter().map(|c| c.connection.threat_score).max().unwrap_or(0)
+            .cmp(&a.1.iter().map(|c| c.connection.threat_score).max().unwrap_or(0))
+            .then_with(|| a.0.cmp(&b.0)));
 
-                egui::Frame::none()
-                    .fill(if is_selected {
-                        egui::Color32::from_rgb(60, 60, 60)
+        // Layout: vertical column of cells with ample spacing (like image 3/4)
+        let cell_width = 300.0;
+        let cell_height = 110.0;
+        let cell_spacing = 25.0;
+
+        let total_height = cells.len() as f32 * (cell_height + cell_spacing) + cell_spacing;
+
+        let available = ui.available_rect_before_wrap();
+
+        egui::ScrollArea::both().show(ui, |ui| {
+            ui.set_min_size(egui::vec2(available.width(), total_height));
+
+            let mut y = cell_spacing;
+            let center_x = available.min.x + available.width() / 2.0 - cell_width / 2.0;
+
+            for (i, (key, conns, cell_color)) in cells.iter().enumerate() {
+                let cell_rect = egui::Rect::from_min_size(
+                    egui::pos2(center_x, y),
+                    egui::vec2(cell_width, cell_height),
+                );
+
+                // Draw connecting line from previous cell to this cell
+                if i > 0 {
+                    let prev_bottom = egui::pos2(center_x + cell_width / 2.0, y - cell_spacing / 2.0);
+                    let this_top = egui::pos2(center_x + cell_width / 2.0, y);
+                    ui.painter().line_segment(
+                        [prev_bottom, this_top],
+                        egui::Stroke::new(2.0, GRAY),
+                    );
+                }
+
+                // Cell frame
+                let is_selected = self.details_selected_node == Some(format!("cell_{}", i));
+                let stroke_color = if is_selected { WHITE } else { *cell_color };
+
+                ui.painter().rect_filled(
+                    cell_rect,
+                    8.0,
+                    egui::Color32::from_rgb(40, 40, 40),
+                );
+                ui.painter().rect_stroke(
+                    cell_rect,
+                    8.0,
+                    egui::Stroke::new(2.0, stroke_color),
+                );
+
+                // Cell content - use scope with clip rect instead of child_ui
+                let old_clip = ui.clip_rect();
+                ui.set_clip_rect(cell_rect.shrink(10.0));
+                ui.vertical_centered(|ui| {
+                    // Process name (truncated)
+                    let display_name = if key.starts_with("unknown") {
+                        format!("Unknown (port {})", key.split(':').nth(1).unwrap_or(&"0"))
                     } else {
-                        match conn.threat_score {
-                            0..=25 => egui::Color32::from_rgb(40, 60, 40),
-                            26..=49 => egui::Color32::from_rgb(60, 60, 40),
-                            50..=74 => egui::Color32::from_rgb(60, 40, 40),
-                            75..=89 => egui::Color32::from_rgb(80, 30, 30),
-                            _ => egui::Color32::from_rgb(100, 20, 20),
-                        }
-                    })
-                    .stroke(egui::Stroke::new(2.0, threat_color))
-                    .inner_margin(8.0)
-                    .show(ui, |ui| {
-                        ui.vertical_centered(|ui| {
-                            let btn_text = if is_selected { "[Selected]" } else { "[View]" };
-                            if ui.button(btn_text).clicked() {
-                                self.details_selected_node = Some(format!("conn_{}", i));
-                                self.details_selected_tab = Tab::ConnectionGraph;
-                                self.details_selected_index = Some(i);
-                            }
+                        key.split(':').nth(1).unwrap_or(&key).to_string()
+                    };
+                    ui.label(egui::RichText::new(&display_name).color(WHITE).size(13.0).strong());
+                    ui.add_space(2.0);
+                    ui.label(egui::RichText::new(format!("PID: {}", key.split(':').next().unwrap_or(&"0"))).color(GRAY).size(10.0));
+                    ui.add_space(2.0);
+                    ui.label(egui::RichText::new(format!("Connections: {}", conns.len())).color(ORANGE).size(11.0));
+                    ui.add_space(2.0);
+                    ui.colored_label(*cell_color, egui::RichText::new(format!("Max Threat: {}", conns.iter().map(|c| c.connection.threat_score).max().unwrap_or(0))).size(10.0));
+                });
+                ui.set_clip_rect(old_clip);
 
-                            ui.add_space(4.0);
+                // Clickable button overlay for the cell
+                let response = ui.interact(
+                    cell_rect,
+                    ui.id().with(format!("cell_btn_{}", i)),
+                    egui::Sense::click(),
+                );
+                if response.clicked() {
+                    self.details_selected_node = Some(format!("cell_{}", i));
+                    self.details_selected_tab = Tab::ConnectionGraph;
+                    self.details_selected_index = Some(0);
+                }
 
-                            ui.label(egui::RichText::new(&display_name).color(WHITE).size(10.0).strong());
-                            ui.label(egui::RichText::new(&src).color(GRAY).size(9.0));
-                            ui.label(egui::RichText::new(&dst).color(GRAY).size(9.0));
-                            ui.label(egui::RichText::new(proto).color(ORANGE).size(9.0));
-                            ui.colored_label(threat_color, egui::RichText::new(format!("Threat: {}", conn.threat_score)).size(9.0));
-                        });
-                    });
-
-                ui.add_space(4.0);
+                y += cell_height + cell_spacing;
             }
         });
+
+        // Details panel for selected cell (bottom section)
+        if let Some(idx) = self.details_selected_index {
+            if let Some(item) = connections.get(idx) {
+                ui.separator();
+                crate::ui::render_connection_detail_topdown(ui, item, &self.monitor_state);
+            }
+        }
     }
 
     fn render_alerts(&mut self, ui: &mut egui::Ui) {
@@ -1366,6 +1367,52 @@ fn ensure_root_privileges() {
 
     // Exit the current (non-root) instance
     std::process::exit(0);
+}
+
+/// Attempt to resolve process info for a connection using multiple fallback methods.
+/// This runs on every platform and tries lsof (macOS/Linux), ss (Linux), /proc (Linux).
+pub async fn resolve_process_info(
+    src_ip: &std::net::IpAddr,
+    src_port: u16,
+) -> (u32, String, Option<String>, Option<String>, Option<String>) {
+    // Try lsof first
+    if let Ok(output) = tokio::process::Command::new("lsof")
+        .args(["-nP", "-i", &format!("{}@{}:{}", if matches!(src_ip, std::net::IpAddr::V4(_)) { "4" } else { "6" }, src_ip, src_port)])
+        .output()
+        .await
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines().skip(1) {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 9 {
+                if let Ok(pid) = parts[1].parse::<u32>() {
+                    let name = parts[0].to_string();
+                    let user = parts[2].to_string();
+                    let (path, cmd) = get_process_details_sync(pid);
+                    return (pid, name, path, cmd, Some(user));
+                }
+            }
+        }
+    }
+
+    // Fallback: return unknown
+    (0, "unknown".to_string(), None, None, None)
+}
+
+fn get_process_details_sync(pid: u32) -> (Option<String>, Option<String>) {
+    let output = match std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "args="])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return (None, None),
+    };
+    let args_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if args_str.is_empty() {
+        return (None, None);
+    }
+    let exe = args_str.split_whitespace().next().unwrap_or("").to_string();
+    (Some(exe.clone()), Some(args_str))
 }
 
 #[cfg(not(target_os = "macos"))]
