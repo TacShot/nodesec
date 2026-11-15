@@ -77,27 +77,43 @@ pub struct ProcessTreeItem {
 impl ProcessTreeItem {
     pub fn from_connections(connections: &[ConnectionItem]) -> Vec<ProcessTreeItem> {
         use std::collections::HashMap;
-        
-        let mut process_map: HashMap<u32, ProcessTreeItem> = HashMap::new();
-        
+
+        let mut process_map: HashMap<String, ProcessTreeItem> = HashMap::new();
+
         for item in connections {
             let conn = &item.connection;
-            let entry = process_map.entry(conn.pid).or_insert_with(|| ProcessTreeItem {
-                pid: conn.pid,
-                name: conn.process_name.clone(),
-                path: conn.process_path.clone(),
-                user: conn.user.clone(),
-                connections: Vec::new(),
-                children: Vec::new(),
-                total_threat_score: 0,
-                is_suspicious: false,
+
+            // For unknown PIDs (0), use a unique key per connection so they don't
+            // all collapse into a single "unknown" entry. For known PIDs, group by PID.
+            let map_key = if conn.pid == 0 && conn.process_name == "unknown" {
+                format!("unknown:{}:{}", conn.src_port, conn.dst_port)
+            } else {
+                conn.pid.to_string()
+            };
+
+            let entry = process_map.entry(map_key.clone()).or_insert_with(|| {
+                let display_name = if conn.pid == 0 && conn.process_name == "unknown" {
+                    format!("unknown (port {})", conn.src_port)
+                } else {
+                    conn.process_name.clone()
+                };
+                ProcessTreeItem {
+                    pid: conn.pid,
+                    name: display_name,
+                    path: conn.process_path.clone(),
+                    user: conn.user.clone(),
+                    connections: Vec::new(),
+                    children: Vec::new(),
+                    total_threat_score: 0,
+                    is_suspicious: false,
+                }
             });
-            
+
             entry.connections.push(conn.clone());
             entry.total_threat_score = entry.total_threat_score.max(conn.threat_score);
             entry.is_suspicious = entry.is_suspicious || conn.is_suspicious;
         }
-        
+
         // Sort by threat score descending
         let mut processes: Vec<ProcessTreeItem> = process_map.into_values().collect();
         processes.sort_by(|a, b| b.total_threat_score.cmp(&a.total_threat_score));
