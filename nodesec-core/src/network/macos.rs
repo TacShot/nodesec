@@ -9,6 +9,16 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
+#[derive(Clone)]
+struct ProcessInfo {
+    pid: u32,
+    src_port: u16,
+    process_name: String,
+    process_path: Option<String>,
+    command_line: Option<String>,
+    user: Option<String>,
+}
+
 pub struct MacOSNetworkMonitor {
     events: Arc<Mutex<VecDeque<NetworkConnection>>>,
     running: Arc<Mutex<bool>>,
@@ -99,13 +109,114 @@ impl MacOSNetworkMonitor {
     async fn scan_connections(&self) -> Result<()> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
+        // Batch lsof once per scan cycle instead of per-connection (slow + needs root)
+        let lsof_map = self.get_all_process_info().await;
+
         // Use netstat or lsof for connection info on macOS
-        self.scan_via_netstat(timestamp).await?;
+        self.scan_via_netstat_with_lsof(timestamp, &lsof_map).await?;
 
         Ok(())
     }
 
-    async fn scan_via_netstat(&self, timestamp: u64) -> Result<()> {
+    /// Run lsof once and build a map of (ip, port) -> process info for all connections.
+    /// This avoids spawning lsof once per connection (which is slow and requires root).
+    async fn get_all_process_info(&self) -> std::collections::HashMap<(u32, u16), ProcessInfo> {
+        let mut map: std::collections::HashMap<(u32, u16), ProcessInfo> = std::collections::HashMap::new();
+
+        let output = match tokio::process::Command::new("lsof")
+            .args(["-nP", "-i"])
+            .output()
+            .await
+        {
+            Ok(o) => o,
+            Err(_) => return map, // lsof not available or no permissions
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines().skip(1) {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 9 {
+                continue;
+            }
+
+            let process_name = parts[0].to_string();
+            let pid: u32 = match parts[1].parse() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let user = parts[2].to_string();
+
+            // lsof -i output: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+            // NAME column looks like: "tcp4->ip:port" or "udp4->ip:port" or "tcp4@ip:port" or "ip:port"
+            // Find the last column (NAME) which may contain spaces — join remaining parts
+            let name = parts[9..].join(" ");
+
+            // Parse local and remote addresses from NAME field
+            // Formats: "tcp4->192.168.1.1:80" or "udp4->[::1]:50789" or "tcp4@*:50789"
+            if let Some(process_info) = self.parse_lsof_name(&name, pid, &process_name, &user) {
+                map.insert((process_info.pid, process_info.src_port), process_info);
+            }
+        }
+
+        map
+    }
+
+    fn parse_lsof_name(&self, name: &str, pid: u32, process_name: &str, user: &str) -> Option<ProcessInfo> {
+        // lsof NAME formats:
+        // "tcp4->192.168.1.1:50789" (established, has remote)
+        // "tcp4@*:50789" (listening, wildcard local)
+        // "tcp4->[::1]:50789" (IPv6)
+
+        let arrow_pos = name.find("->").or_else(|| name.find("@"))?;
+        let addr_part = &name[arrow_pos + 2..];
+
+        // Parse "ip:port" or "[ipv6]:port"
+        let (ip_str, port_str) = if addr_part.starts_with('[') {
+            let end = addr_part.find(']')?;
+            let ip = &addr_part[1..end];
+            let port = &addr_part[end + 2..]; // skip "]:"
+            (ip, port)
+        } else {
+            let last_dot = addr_part.rfind('.')?;
+            let ip = &addr_part[..last_dot];
+            let port = &addr_part[last_dot + 1..];
+            (ip, port)
+        };
+
+        let src_port: u16 = port_str.parse().ok()?;
+
+        // Try to get more details via ps
+        let (process_path, command_line) = self.get_process_details(pid);
+
+        Some(ProcessInfo {
+            pid,
+            src_port,
+            process_name: process_name.to_string(),
+            process_path,
+            command_line,
+            user: Some(user.to_string()),
+        })
+    }
+
+    fn get_process_details(&self, pid: u32) -> (Option<String>, Option<String>) {
+        let result = std::process::Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "args="])
+            .output()
+            .ok()
+            .and_then(|o| Some(String::from_utf8_lossy(&o.stdout).trim().to_string()))
+            .filter(|s| !s.is_empty())
+            .map(|args| {
+                let exe = args.split_whitespace().next().unwrap_or("").to_string();
+                (Some(exe.clone()), Some(args))
+            });
+
+        match result {
+            Some((path, cmd)) => (path, cmd),
+            None => (None, None),
+        }
+    }
+
+    async fn scan_via_netstat_with_lsof(&self, timestamp: u64, lsof_map: &std::collections::HashMap<(u32, u16), ProcessInfo>) -> Result<()> {
         // Use netstat -an for all connections
         let output = tokio::process::Command::new("netstat")
             .args(["-an", "-p", "tcp"])
@@ -115,7 +226,7 @@ impl MacOSNetworkMonitor {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines().skip(2) { // Skip headers
-            if let Some(event) = self.parse_netstat_line(line, timestamp, NetworkProtocol::Tcp).await? {
+            if let Some(event) = self.parse_netstat_line_with_lsof(line, timestamp, NetworkProtocol::Tcp, lsof_map) {
                 self.add_event(event).await;
             }
         }
@@ -129,7 +240,7 @@ impl MacOSNetworkMonitor {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines().skip(2) {
-            if let Some(event) = self.parse_netstat_line(line, timestamp, NetworkProtocol::Udp).await? {
+            if let Some(event) = self.parse_netstat_line_with_lsof(line, timestamp, NetworkProtocol::Udp, lsof_map) {
                 self.add_event(event).await;
             }
         }
@@ -137,10 +248,16 @@ impl MacOSNetworkMonitor {
         Ok(())
     }
 
-    async fn parse_netstat_line(&self, line: &str, timestamp: u64, protocol: NetworkProtocol) -> Result<Option<NetworkConnection>> {
+    fn parse_netstat_line_with_lsof(
+        &self,
+        line: &str,
+        timestamp: u64,
+        protocol: NetworkProtocol,
+        lsof_map: &std::collections::HashMap<(u32, u16), ProcessInfo>,
+    ) -> Option<NetworkConnection> {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 5 {
-            return Ok(None);
+            return None;
         }
 
         // netstat output format: Proto Recv-Q Send-Q Local Address Foreign Address (state)
@@ -149,32 +266,49 @@ impl MacOSNetworkMonitor {
 
         // Skip listening sockets
         if foreign_addr == "*.*" || foreign_addr == "[::]:*" {
-            return Ok(None);
+            return None;
         }
 
         // Skip wildcard addresses early
         if local_addr.contains("*") || foreign_addr.contains("*") {
-            return Ok(None);
+            return None;
         }
 
         let (src_ip, src_port) = match self.parse_addr(local_addr) {
             Ok(v) => v,
-            Err(_) => return Ok(None), // Skip unparseable addresses silently
+            Err(_) => return None, // Skip unparseable addresses silently
         };
         let (dst_ip, dst_port) = match self.parse_addr(foreign_addr) {
             Ok(v) => v,
-            Err(_) => return Ok(None),
+            Err(_) => return None,
         };
 
         // Skip if destination port is 0
         if dst_port == 0 {
-            return Ok(None);
+            return None;
         }
 
-        // Try to get PID using lsof
-        let (pid, process_name, process_path, command_line, user) = self.get_process_info(&src_ip, src_port, &dst_ip, dst_port).await;
+        // Look up process info from batched lsof data
+        // lsof gives us (pid, src_port) -> ProcessInfo
+        // We match by src_port since netstat local port = lsof local port
+        let mut pid = 0u32;
+        let mut process_name = "unknown".to_string();
+        let mut process_path = None;
+        let mut command_line = None;
+        let mut user = None;
 
-        Ok(Some(NetworkConnection {
+        for (key, info) in lsof_map.iter() {
+            if key.1 == src_port {
+                pid = info.pid;
+                process_name = info.process_name.clone();
+                process_path = info.process_path.clone();
+                command_line = info.command_line.clone();
+                user = info.user.clone();
+                break;
+            }
+        }
+
+        Some(NetworkConnection {
             timestamp,
             pid,
             src_ip,
@@ -188,7 +322,7 @@ impl MacOSNetworkMonitor {
             user,
             threat_score: 0,
             is_suspicious: false,
-        }))
+        })
     }
 
     fn parse_addr(&self, addr: &str) -> Result<(IpAddr, u16)> {
@@ -234,73 +368,6 @@ impl MacOSNetworkMonitor {
             let ip = ip_str.parse::<IpAddr>()?;
             Ok((ip, port))
         }
-    }
-
-    async fn get_process_info(
-        &self,
-        src_ip: &IpAddr,
-        src_port: u16,
-        _dst_ip: &IpAddr,
-        _dst_port: u16,
-    ) -> (u32, String, Option<String>, Option<String>, Option<String>) {
-        // Use lsof to find the process owning this connection
-        let output = tokio::process::Command::new("lsof")
-            .args(["-i", &format!("{}@{}:{}", if matches!(src_ip, IpAddr::V4(_)) { "4" } else { "6" }, src_ip, src_port)])
-            .output()
-            .await;
-
-        let mut pid = 0;
-        let mut process_name = "unknown".to_string();
-        let mut process_path = None;
-        let mut command_line = None;
-        let mut user = None;
-
-        if let Ok(output) = output {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines().skip(1) {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    if let Ok(p) = parts[1].parse::<u32>() {
-                        pid = p;
-                        process_name = parts[0].to_string();
-                        user = Some(parts[2].to_string()); // user column
-                        break;
-                    }
-                }
-            }
-        }
-
-        if pid > 0 {
-            // Get more process details using ps
-            if let Ok(output) = tokio::process::Command::new("ps")
-                .args(["-p", &pid.to_string(), "-o", "comm="])
-                .output()
-                .await
-            {
-                let comm = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !comm.is_empty() {
-                    process_name = comm;
-                }
-            }
-
-            // Get executable path
-            if let Ok(output) = tokio::process::Command::new("ps")
-                .args(["-p", &pid.to_string(), "-o", "args="])
-                .output()
-                .await
-            {
-                let args_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !args_str.is_empty() {
-                    command_line = Some(args_str.clone());
-                    // First word is usually the executable
-                    if let Some(exe) = args_str.split_whitespace().next() {
-                        process_path = Some(exe.to_string());
-                    }
-                }
-            }
-        }
-
-        (pid, process_name, process_path, command_line, user)
     }
 
     async fn add_event(&self, event: NetworkConnection) {
@@ -356,6 +423,9 @@ impl MacOSNetworkMonitor {
     pub fn scan_once_blocking_impl(&mut self) -> Result<()> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
+        // Batch lsof once per scan cycle
+        let lsof_map = self.get_all_process_info_blocking();
+
         // Use netstat for TCP
         let output = std::process::Command::new("netstat")
             .args(["-an", "-p", "tcp"])
@@ -364,7 +434,7 @@ impl MacOSNetworkMonitor {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines().skip(2) {
-            if let Some(event) = self.parse_netstat_line_blocking(line, timestamp, NetworkProtocol::Tcp)? {
+            if let Some(event) = self.parse_netstat_line_blocking_with_lsof(line, timestamp, NetworkProtocol::Tcp, &lsof_map) {
                 self.add_event_blocking(event)?;
             }
         }
@@ -377,7 +447,7 @@ impl MacOSNetworkMonitor {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines().skip(2) {
-            if let Some(event) = self.parse_netstat_line_blocking(line, timestamp, NetworkProtocol::Udp)? {
+            if let Some(event) = self.parse_netstat_line_blocking_with_lsof(line, timestamp, NetworkProtocol::Udp, &lsof_map) {
                 self.add_event_blocking(event)?;
             }
         }
@@ -385,45 +455,98 @@ impl MacOSNetworkMonitor {
         Ok(())
     }
 
-    /// Blocking parse of netstat line
-    fn parse_netstat_line_blocking(&self, line: &str, timestamp: u64, protocol: NetworkProtocol) -> Result<Option<NetworkConnection>> {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 5 {
-            return Ok(None);
+    /// Blocking lsof — run once, build process map
+    fn get_all_process_info_blocking(&self) -> std::collections::HashMap<(u32, u16), ProcessInfo> {
+        let mut map: std::collections::HashMap<(u32, u16), ProcessInfo> = std::collections::HashMap::new();
+
+        let output = match std::process::Command::new("lsof")
+            .args(["-nP", "-i"])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return map,
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines().skip(1) {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 9 {
+                continue;
+            }
+
+            let process_name = parts[0].to_string();
+            let pid: u32 = match parts[1].parse() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let user = parts[2].to_string();
+
+            let name = parts[9..].join(" ");
+
+            if let Some(process_info) = self.parse_lsof_name(&name, pid, &process_name, &user) {
+                map.insert((process_info.pid, process_info.src_port), process_info);
+            }
         }
 
-        // netstat output format: Proto Recv-Q Send-Q Local Address Foreign Address (state)
+        map
+    }
+
+    /// Blocking parse of netstat line with batched lsof data
+    fn parse_netstat_line_blocking_with_lsof(
+        &self,
+        line: &str,
+        timestamp: u64,
+        protocol: NetworkProtocol,
+        lsof_map: &std::collections::HashMap<(u32, u16), ProcessInfo>,
+    ) -> Option<NetworkConnection> {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 5 {
+            return None;
+        }
+
         let local_addr = parts[3];
         let foreign_addr = parts[4];
 
-        // Skip listening sockets
         if foreign_addr == "*.*" || foreign_addr == "[::]:*" {
-            return Ok(None);
+            return None;
         }
 
-        // Skip wildcard addresses early
         if local_addr.contains("*") || foreign_addr.contains("*") {
-            return Ok(None);
+            return None;
         }
 
         let (src_ip, src_port) = match self.parse_addr(local_addr) {
             Ok(v) => v,
-            Err(_) => return Ok(None), // Skip unparseable addresses silently
+            Err(_) => return None,
         };
         let (dst_ip, dst_port) = match self.parse_addr(foreign_addr) {
             Ok(v) => v,
-            Err(_) => return Ok(None),
+            Err(_) => return None,
         };
 
-        // Skip if destination port is 0
         if dst_port == 0 {
-            return Ok(None);
+            return None;
         }
 
-        // Try to get PID using lsof (blocking)
-        let (pid, process_name, process_path, command_line, user) = self.get_process_info_blocking(&src_ip, src_port, &dst_ip, dst_port);
+        // Look up process info from batched lsof data
+        let mut pid = 0u32;
+        let mut process_name = "unknown".to_string();
+        let mut process_path = None;
+        let mut command_line = None;
+        let mut user = None;
 
-        Ok(Some(NetworkConnection {
+        for (key, info) in lsof_map.iter() {
+            if key.1 == src_port {
+                pid = info.pid;
+                process_name = info.process_name.clone();
+                process_path = info.process_path.clone();
+                command_line = info.command_line.clone();
+                user = info.user.clone();
+                break;
+            }
+        }
+
+        Some(NetworkConnection {
             timestamp,
             pid,
             src_ip,
@@ -437,7 +560,7 @@ impl MacOSNetworkMonitor {
             user,
             threat_score: 0,
             is_suspicious: false,
-        }))
+        })
     }
 
     /// Blocking add event
@@ -448,71 +571,6 @@ impl MacOSNetworkMonitor {
             events.pop_front();
         }
         Ok(())
-    }
-
-    /// Blocking process info lookup
-    fn get_process_info_blocking(
-        &self,
-        src_ip: &IpAddr,
-        src_port: u16,
-        _dst_ip: &IpAddr,
-        _dst_port: u16,
-    ) -> (u32, String, Option<String>, Option<String>, Option<String>) {
-        // Use lsof to find the process owning this connection
-        let output = std::process::Command::new("lsof")
-            .args(["-i", &format!("{}@{}:{}", if matches!(src_ip, IpAddr::V4(_)) { "4" } else { "6" }, src_ip, src_port)])
-            .output();
-
-        let mut pid = 0;
-        let mut process_name = "unknown".to_string();
-        let mut process_path = None;
-        let mut command_line = None;
-        let mut user = None;
-
-        if let Ok(output) = output {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines().skip(1) {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    if let Ok(p) = parts[1].parse::<u32>() {
-                        pid = p;
-                        process_name = parts[0].to_string();
-                        user = Some(parts[2].to_string()); // user column
-                        break;
-                    }
-                }
-            }
-        }
-
-        if pid > 0 {
-            // Get more process details using ps
-            if let Ok(output) = std::process::Command::new("ps")
-                .args(["-p", &pid.to_string(), "-o", "comm="])
-                .output()
-            {
-                let comm = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !comm.is_empty() {
-                    process_name = comm;
-                }
-            }
-
-            // Get executable path
-            if let Ok(output) = std::process::Command::new("ps")
-                .args(["-p", &pid.to_string(), "-o", "args="])
-                .output()
-            {
-                let args_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !args_str.is_empty() {
-                    command_line = Some(args_str.clone());
-                    // First word is usually the executable
-                    if let Some(exe) = args_str.split_whitespace().next() {
-                        process_path = Some(exe.to_string());
-                    }
-                }
-            }
-        }
-
-        (pid, process_name, process_path, command_line, user)
     }
 
     /// Scan connections once (called by ConnectionHandler)
