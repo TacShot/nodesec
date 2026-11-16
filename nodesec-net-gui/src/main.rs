@@ -306,7 +306,7 @@ impl App {
                 // Time
                 if self.conn_sort_field == SortField::Time {
                     ui.label(egui::RichText::new(format!("Time {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("conn_sort_time_btn").clicked() {
+                } else if ui.small_button("Time").clicked() {
                     if self.conn_sort_field == SortField::Time {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -322,7 +322,7 @@ impl App {
                 // PID
                 if self.conn_sort_field == SortField::Pid {
                     ui.label(egui::RichText::new(format!("PID {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("conn_sort_pid_btn").clicked() {
+                } else if ui.small_button("PID").clicked() {
                     if self.conn_sort_field == SortField::Pid {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -338,7 +338,7 @@ impl App {
                 // Process
                 if self.conn_sort_field == SortField::Process {
                     ui.label(egui::RichText::new(format!("Process {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("conn_sort_process_btn").clicked() {
+                } else if ui.small_button("Process").clicked() {
                     if self.conn_sort_field == SortField::Process {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -354,7 +354,7 @@ impl App {
                 // Proto
                 if self.conn_sort_field == SortField::Proto {
                     ui.label(egui::RichText::new(format!("Proto {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("conn_sort_proto_btn").clicked() {
+                } else if ui.small_button("Proto").clicked() {
                     if self.conn_sort_field == SortField::Proto {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -370,7 +370,7 @@ impl App {
                 // Source
                 if self.conn_sort_field == SortField::Source {
                     ui.label(egui::RichText::new(format!("Source {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("conn_sort_source_btn").clicked() {
+                } else if ui.small_button("Source").clicked() {
                     if self.conn_sort_field == SortField::Source {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -386,7 +386,7 @@ impl App {
                 // Destination
                 if self.conn_sort_field == SortField::Destination {
                     ui.label(egui::RichText::new(format!("Destination {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("conn_sort_dest_btn").clicked() {
+                } else if ui.small_button("Destination").clicked() {
                     if self.conn_sort_field == SortField::Destination {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -402,7 +402,7 @@ impl App {
                 // Threat
                 if self.conn_sort_field == SortField::Score {
                     ui.label(egui::RichText::new(format!("Score {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("conn_sort_score_btn").clicked() {
+                } else if ui.small_button("Score").clicked() {
                     if self.conn_sort_field == SortField::Score {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -1414,15 +1414,8 @@ impl App {
                             if let Ok(entries) = std::fs::read_dir(desktop_reports) {
                                 for entry in entries.flatten() {
                                     let path = entry.path();
-                                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                                    // Check if it's a directory starting with nodesec- or nodesec
-                                    if path.is_dir() && (name.starts_with("nodesec-") || name.starts_with("nodesec ")) {
-                                        reports.push(path);
-                                    }
-                                    // Also check for report files directly inside
-                                    else if path.is_file() && name.starts_with("nodesec") {
-                                        reports.push(path);
-                                    }
+                                    // Accept any item inside the Reports folder
+                                    reports.push(path);
                                 }
                             }
                         }
@@ -1442,10 +1435,12 @@ impl App {
                     if reports.is_empty() {
                         ui.label(egui::RichText::new("No reports found. Run an audit to generate reports.").color(GRAY));
                     } else {
-                        for report_dir in reports.iter().take(10) {
-                            let dir_name = report_dir.file_name().unwrap_or_default().to_string_lossy().to_string();
-                            let platform = dir_name.split('-').nth(1).unwrap_or("unknown");
-                            let date_part = dir_name.split('-').skip(2).collect::<Vec<_>>().join("-");
+                        for report_path in reports.iter().take(10) {
+                            let dir_name = report_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                            // Try to parse nodesec-platform-date format, otherwise show raw name
+                            let parts: Vec<&str> = dir_name.splitn(3, '-').collect();
+                            let platform = if parts.len() >= 2 { parts[1] } else { "unknown" };
+                            let date_part = parts.get(2).unwrap_or(&"").to_string();
                             ui.label(&dir_name);
                             ui.label(platform);
                             ui.label(&date_part);
