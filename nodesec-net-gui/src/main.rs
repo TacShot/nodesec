@@ -304,9 +304,7 @@ impl App {
                 ui.add_space(8.0);
 
                 // Time
-                if self.conn_sort_field == SortField::Time {
-                    ui.label(egui::RichText::new(format!("Time {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Time").clicked() {
+                if ui.small_button(format!("Time {}", self.conn_sort_dir.icon())).clicked() {
                     if self.conn_sort_field == SortField::Time {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -320,9 +318,7 @@ impl App {
                 ui.add_space(8.0);
 
                 // PID
-                if self.conn_sort_field == SortField::Pid {
-                    ui.label(egui::RichText::new(format!("PID {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("PID").clicked() {
+                if ui.small_button(format!("PID {}", self.conn_sort_dir.icon())).clicked() {
                     if self.conn_sort_field == SortField::Pid {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -336,9 +332,7 @@ impl App {
                 ui.add_space(16.0);
 
                 // Process
-                if self.conn_sort_field == SortField::Process {
-                    ui.label(egui::RichText::new(format!("Process {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Process").clicked() {
+                if ui.small_button(format!("Process {}", self.conn_sort_dir.icon())).clicked() {
                     if self.conn_sort_field == SortField::Process {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -352,9 +346,7 @@ impl App {
                 ui.add_space(16.0);
 
                 // Proto
-                if self.conn_sort_field == SortField::Proto {
-                    ui.label(egui::RichText::new(format!("Proto {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Proto").clicked() {
+                if ui.small_button(format!("Proto {}", self.conn_sort_dir.icon())).clicked() {
                     if self.conn_sort_field == SortField::Proto {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -368,9 +360,7 @@ impl App {
                 ui.add_space(16.0);
 
                 // Source
-                if self.conn_sort_field == SortField::Source {
-                    ui.label(egui::RichText::new(format!("Source {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Source").clicked() {
+                if ui.small_button(format!("Source {}", self.conn_sort_dir.icon())).clicked() {
                     if self.conn_sort_field == SortField::Source {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -384,9 +374,7 @@ impl App {
                 ui.add_space(16.0);
 
                 // Destination
-                if self.conn_sort_field == SortField::Destination {
-                    ui.label(egui::RichText::new(format!("Destination {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Destination").clicked() {
+                if ui.small_button(format!("Destination {}", self.conn_sort_dir.icon())).clicked() {
                     if self.conn_sort_field == SortField::Destination {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -400,9 +388,7 @@ impl App {
                 ui.add_space(16.0);
 
                 // Threat
-                if self.conn_sort_field == SortField::Score {
-                    ui.label(egui::RichText::new(format!("Score {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Score").clicked() {
+                if ui.small_button(format!("Score {}", self.conn_sort_dir.icon())).clicked() {
                     if self.conn_sort_field == SortField::Score {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -1721,7 +1707,7 @@ impl eframe::App for App {
         egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
-                ui.label(egui::RichText::new("Nodesec v0.1.0").color(GRAY));
+                ui.label(egui::RichText::new("Nodesec v1.0.0").color(GRAY));
             });
         });
 

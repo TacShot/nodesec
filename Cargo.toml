@@ -4,7 +4,7 @@ members = ["nodesec-core", "nodesec-cli", "nodesec-tui", "nodesec-gui", "nodesec
 exclude = ["target", "nodesec-core/fuzz"]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "nodesec - Cross-platform System & Network Security Platform"
