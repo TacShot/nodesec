@@ -887,16 +887,24 @@ pub fn render_dashboard(
     
     ui.add_space(10.0);
     
-    // Get stats once for all dashboard sections
-    let stats = monitor_state.stats.lock().unwrap();
-    let connections = monitor_state.connections.lock().unwrap();
+    // Copy all stats out of Mutex guards immediately (don't hold locks during UI rendering)
+    let (total_scanned, active_connections, suspicious, critical) = {
+        let stats = monitor_state.stats.lock().unwrap();
+        let connections = monitor_state.connections.lock().unwrap();
+        (
+            stats.total,
+            connections.len(),
+            stats.suspicious,
+            stats.critical,
+        )
+    };
 
     // Current stats
     ui.horizontal(|ui| {
-        stat_card(ui, "Total Scanned", &stats.total.to_string(), WHITE);
-        stat_card(ui, "Active Now", &connections.len().to_string(), GREEN);
-        stat_card(ui, "Suspicious", &stats.suspicious.to_string(), RED);
-        stat_card(ui, "Critical", &stats.critical.to_string(), YELLOW);
+        stat_card(ui, "Total Scanned", &total_scanned.to_string(), WHITE);
+        stat_card(ui, "Active Now", &active_connections.to_string(), GREEN);
+        stat_card(ui, "Suspicious", &suspicious.to_string(), RED);
+        stat_card(ui, "Critical", &critical.to_string(), YELLOW);
     });
 
     ui.add_space(10.0);
@@ -907,23 +915,9 @@ pub fn render_dashboard(
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(format!("Platform: {:?}", monitor_state.platform)).color(WHITE).strong());
             ui.add_space(20.0);
-            ui.label(egui::RichText::new(format!("Total Connections: {}", stats.total)).color(WHITE));
+            ui.label(egui::RichText::new(format!("Total Connections: {}", total_scanned)).color(WHITE));
             ui.add_space(20.0);
-            ui.label(egui::RichText::new(format!("Suspicious: {}", stats.suspicious)).color(RED));
-        });
-    });
-    
-    ui.add_space(10.0);
-    
-    // Platform info
-    ui.group(|ui| {
-        ui.heading(egui::RichText::new("Platform Info").color(ORANGE));
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(format!("Platform: {:?}", monitor_state.platform)).color(WHITE).strong());
-            ui.add_space(20.0);
-            ui.label(egui::RichText::new(format!("Total Connections: {}", stats.total)).color(WHITE));
-            ui.add_space(20.0);
-            ui.label(egui::RichText::new(format!("Suspicious: {}", stats.suspicious)).color(RED));
+            ui.label(egui::RichText::new(format!("Suspicious: {}", suspicious)).color(RED));
         });
     });
     
