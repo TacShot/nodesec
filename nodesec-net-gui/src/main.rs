@@ -118,6 +118,7 @@ struct App {
     details_selected_conn: Option<nodesec_core::models::NetworkConnection>,
     details_selected_pid: Option<u32>,
     details_selected_node: Option<String>,
+    details_selected_node_text: Option<String>,
     // Details pane visibility
     show_details_pane: bool,
     // Sort state
@@ -152,6 +153,7 @@ impl App {
             details_selected_conn: None,
             details_selected_pid: None,
             details_selected_node: None,
+            details_selected_node_text: None,
             show_details_pane: true,
             conn_sort_field: SortField::Time,
             conn_sort_dir: SortDir::Desc,
@@ -1624,11 +1626,7 @@ impl eframe::App for App {
 
                 ui.separator();
 
-                ui.label(egui::RichText::new(format!("Platform: {:?}", self.monitor_state.platform)).color(GRAY).size(13.0));
-
-                let stats = self.monitor_state.stats.lock().unwrap();
-                ui.label(egui::RichText::new(format!("Connections: {}", stats.total)).color(GRAY).size(13.0));
-                ui.label(egui::RichText::new(format!("Suspicious: {}", stats.suspicious)).color(RED).size(13.0));
+                // Stats moved to dashboard
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add_space(20.0);
@@ -1787,6 +1785,7 @@ pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
             details_selected_conn: None,
             details_selected_pid: None,
             details_selected_node: None,
+            details_selected_node_text: None,
             show_details_pane: true,
             conn_sort_field: SortField::Time,
             conn_sort_dir: SortDir::Desc,

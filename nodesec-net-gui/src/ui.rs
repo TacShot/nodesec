@@ -887,15 +887,44 @@ pub fn render_dashboard(
     
     ui.add_space(10.0);
     
+    // Get stats once for all dashboard sections
+    let stats = monitor_state.stats.lock().unwrap();
+    let connections = monitor_state.connections.lock().unwrap();
+
     // Current stats
     ui.horizontal(|ui| {
-        let stats = monitor_state.stats.lock().unwrap();
-        let connections = monitor_state.connections.lock().unwrap();
-        
         stat_card(ui, "Total Scanned", &stats.total.to_string(), WHITE);
         stat_card(ui, "Active Now", &connections.len().to_string(), GREEN);
         stat_card(ui, "Suspicious", &stats.suspicious.to_string(), RED);
         stat_card(ui, "Critical", &stats.critical.to_string(), YELLOW);
+    });
+
+    ui.add_space(10.0);
+
+    // Platform info
+    ui.group(|ui| {
+        ui.heading(egui::RichText::new("Platform Info").color(ORANGE));
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(format!("Platform: {:?}", monitor_state.platform)).color(WHITE).strong());
+            ui.add_space(20.0);
+            ui.label(egui::RichText::new(format!("Total Connections: {}", stats.total)).color(WHITE));
+            ui.add_space(20.0);
+            ui.label(egui::RichText::new(format!("Suspicious: {}", stats.suspicious)).color(RED));
+        });
+    });
+    
+    ui.add_space(10.0);
+    
+    // Platform info
+    ui.group(|ui| {
+        ui.heading(egui::RichText::new("Platform Info").color(ORANGE));
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(format!("Platform: {:?}", monitor_state.platform)).color(WHITE).strong());
+            ui.add_space(20.0);
+            ui.label(egui::RichText::new(format!("Total Connections: {}", stats.total)).color(WHITE));
+            ui.add_space(20.0);
+            ui.label(egui::RichText::new(format!("Suspicious: {}", stats.suspicious)).color(RED));
+        });
     });
     
     ui.add_space(10.0);
