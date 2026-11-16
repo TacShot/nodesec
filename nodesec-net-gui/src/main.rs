@@ -1414,11 +1414,14 @@ impl App {
                             if let Ok(entries) = std::fs::read_dir(desktop_reports) {
                                 for entry in entries.flatten() {
                                     let path = entry.path();
-                                    if path.is_dir() {
-                                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                                        if name.starts_with("nodesec-") || name.starts_with("nodesec ") {
-                                            reports.push(path);
-                                        }
+                                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                                    // Check if it's a directory starting with nodesec- or nodesec
+                                    if path.is_dir() && (name.starts_with("nodesec-") || name.starts_with("nodesec ")) {
+                                        reports.push(path);
+                                    }
+                                    // Also check for report files directly inside
+                                    else if path.is_file() && name.starts_with("nodesec") {
+                                        reports.push(path);
                                     }
                                 }
                             }
