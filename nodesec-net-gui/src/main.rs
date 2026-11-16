@@ -288,7 +288,9 @@ impl App {
             }
         });
 
-        egui::ScrollArea::both().show(ui, |ui| {
+        egui::ScrollArea::both()
+            .id_source("connections_scrollarea")
+            .show(ui, |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
 
             // Sortable header row — click to toggle sort
@@ -296,7 +298,7 @@ impl App {
                 ui.add_space(2.0);
 
                 // Sel column
-                if ui.small_button("Sel").clicked() {
+                if ui.small_button("conn_sel_btn").clicked() {
                     // No sort for selection column
                 }
                 ui.add_space(8.0);
@@ -304,7 +306,7 @@ impl App {
                 // Time
                 if self.conn_sort_field == SortField::Time {
                     ui.label(egui::RichText::new(format!("Time {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Time").clicked() {
+                } else if ui.small_button("conn_sort_time_btn").clicked() {
                     if self.conn_sort_field == SortField::Time {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -320,7 +322,7 @@ impl App {
                 // PID
                 if self.conn_sort_field == SortField::Pid {
                     ui.label(egui::RichText::new(format!("PID {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("PID").clicked() {
+                } else if ui.small_button("conn_sort_pid_btn").clicked() {
                     if self.conn_sort_field == SortField::Pid {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -336,7 +338,7 @@ impl App {
                 // Process
                 if self.conn_sort_field == SortField::Process {
                     ui.label(egui::RichText::new(format!("Process {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Process").clicked() {
+                } else if ui.small_button("conn_sort_process_btn").clicked() {
                     if self.conn_sort_field == SortField::Process {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -352,7 +354,7 @@ impl App {
                 // Proto
                 if self.conn_sort_field == SortField::Proto {
                     ui.label(egui::RichText::new(format!("Proto {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Proto").clicked() {
+                } else if ui.small_button("conn_sort_proto_btn").clicked() {
                     if self.conn_sort_field == SortField::Proto {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -368,7 +370,7 @@ impl App {
                 // Source
                 if self.conn_sort_field == SortField::Source {
                     ui.label(egui::RichText::new(format!("Source {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Source").clicked() {
+                } else if ui.small_button("conn_sort_source_btn").clicked() {
                     if self.conn_sort_field == SortField::Source {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -384,7 +386,7 @@ impl App {
                 // Destination
                 if self.conn_sort_field == SortField::Destination {
                     ui.label(egui::RichText::new(format!("Destination {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Destination").clicked() {
+                } else if ui.small_button("conn_sort_dest_btn").clicked() {
                     if self.conn_sort_field == SortField::Destination {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -400,7 +402,7 @@ impl App {
                 // Threat
                 if self.conn_sort_field == SortField::Score {
                     ui.label(egui::RichText::new(format!("Score {}", self.conn_sort_dir.icon())).color(ORANGE).strong());
-                } else if ui.small_button("Score").clicked() {
+                } else if ui.small_button("conn_sort_score_btn").clicked() {
                     if self.conn_sort_field == SortField::Score {
                         self.conn_sort_dir = match self.conn_sort_dir {
                             SortDir::Asc => SortDir::Desc,
@@ -864,28 +866,28 @@ impl App {
         // Draw cells using painter (avoids clipping issues with ui.label)
         let mut cell_rects: Vec<(egui::Rect, String)> = Vec::new();
 
-        let mut y = cell_spacing;
-        let center_x = available.min.x + available.width() / 2.0 - cell_width / 2.0 + offset.x;
-        let y_offset = available.top() + offset.y;
+        let mut x = cell_spacing;
+        let x_offset = available.min.x + offset.x;
+        let center_y = available.top() + cell_height / 2.0 + offset.y;
 
         for (i, (key, conns, cell_color)) in cells.iter().enumerate() {
             let cell_rect = egui::Rect::from_min_size(
-                egui::pos2(center_x, y_offset + y),
+                egui::pos2(x_offset + x, center_y - cell_height / 2.0),
                 egui::vec2(cell_width, cell_height),
             );
 
             // Draw connecting line from previous cell to this cell
             if i > 0 {
-                let prev_bottom = egui::pos2(center_x + cell_width / 2.0, y_offset + y - cell_spacing / 2.0);
-                let this_top = egui::pos2(center_x + cell_width / 2.0, y_offset + y);
+                let prev_right = egui::pos2(x_offset + x - cell_spacing / 2.0, center_y);
+                let this_left = egui::pos2(x_offset + x, center_y);
                 ui.painter().line_segment(
-                    [prev_bottom, this_top],
+                    [prev_right, this_left],
                     egui::Stroke::new(2.0, GRAY),
                 );
             }
 
             // Cell frame
-            let is_selected = self.details_selected_node == Some(format!("cell_{}", i));
+            let is_selected = self.details_selected_node == Some(key.clone());
             let stroke_color = if is_selected { WHITE } else { *cell_color };
 
             ui.painter().rect_filled(
@@ -907,9 +909,9 @@ impl App {
                 key.split(':').nth(1).unwrap_or(&key).to_string()
             };
 
-            // Name
+            // Name (vertical center)
             ui.painter().text(
-                egui::pos2(center_x + cell_width / 2.0, y_offset + y + 16.0),
+                egui::pos2(x_offset + x + cell_width / 2.0, center_y - 10.0),
                 egui::Align2::CENTER_CENTER,
                 &display_name,
                 egui::FontId::new(13.0, egui::FontFamily::Proportional),
@@ -917,7 +919,7 @@ impl App {
             );
             // PID
             ui.painter().text(
-                egui::pos2(center_x + cell_width / 2.0, y_offset + y + 34.0),
+                egui::pos2(x_offset + x + cell_width / 2.0, center_y + 6.0),
                 egui::Align2::CENTER_CENTER,
                 &format!("PID: {}", cell_pid),
                 egui::FontId::new(10.0, egui::FontFamily::Proportional),
@@ -925,7 +927,7 @@ impl App {
             );
             // Connections count
             ui.painter().text(
-                egui::pos2(center_x + cell_width / 2.0, y_offset + y + 50.0),
+                egui::pos2(x_offset + x + cell_width / 2.0, center_y + 22.0),
                 egui::Align2::CENTER_CENTER,
                 &format!("Connections: {}", conns.len()),
                 egui::FontId::new(11.0, egui::FontFamily::Proportional),
@@ -933,7 +935,7 @@ impl App {
             );
             // Max threat
             ui.painter().text(
-                egui::pos2(center_x + cell_width / 2.0, y_offset + y + 66.0),
+                egui::pos2(x_offset + x + cell_width / 2.0, center_y + 38.0),
                 egui::Align2::CENTER_CENTER,
                 &format!("Max Threat: {}", conns.iter().map(|c| c.connection.threat_score).max().unwrap_or(0)),
                 egui::FontId::new(10.0, egui::FontFamily::Proportional),
@@ -942,12 +944,11 @@ impl App {
 
             cell_rects.push((cell_rect, key.clone()));
 
-            y += cell_height + cell_spacing;
+            x += cell_width + cell_spacing;
         }
 
         // Clickable overlays for each cell
         for (cell_rect, cell_key) in cell_rects.iter() {
-            let cell_pid: u32 = cell_key.split(':').next().unwrap_or(&"0").parse().unwrap_or(0);
             let widget_id = format!("cg_cell_{}", cell_key);
             let response = ui.interact(
                 *cell_rect,
@@ -955,7 +956,7 @@ impl App {
                 egui::Sense::click(),
             );
             if response.clicked() {
-                self.details_selected_node = Some(format!("cell_{}", cell_key));
+                self.details_selected_node = Some(cell_key.clone());
                 self.details_selected_tab = Tab::ConnectionGraph;
                 // Find the first connection for this cell's process
                 if let Some(item) = connections.iter().find(|item| {
@@ -969,7 +970,7 @@ impl App {
         }
 
         // Set minimum scrollable size
-        ui.set_min_size(egui::vec2(available.width(), total_height));
+        ui.set_min_size(egui::vec2(x, available.height()));
     }
 
     fn render_devices(&mut self, ui: &mut egui::Ui) {
@@ -1403,15 +1404,15 @@ impl App {
             ui.separator();
 
             ui.horizontal(|ui| {
-                if ui.button("List Reports").clicked() {
+                if ui.button("reports_list_btn").clicked() {
                     // Will auto-list below
                 }
                 ui.add_space(8.0);
-                if ui.button("Export Report").clicked() {
+                if ui.button("reports_export_btn").clicked() {
                     // Export functionality
                 }
                 ui.add_space(8.0);
-                if ui.button("Delete Report").clicked() {
+                if ui.button("reports_delete_btn").clicked() {
                     // Delete functionality
                 }
             });
@@ -1435,15 +1436,18 @@ impl App {
             }
 
             if reports.is_empty() {
-                // Also check Desktop/Hyntel Reports
+                // Also check Desktop/Hyntel Reports and Desktop/nodesec Reports
                 if let Ok(home) = std::env::var("HOME") {
-                    let desktop_reports = std::path::Path::new(&home).join("Desktop/Hyntel Reports");
-                    if desktop_reports.exists() {
-                        if let Ok(entries) = std::fs::read_dir(desktop_reports) {
-                            for entry in entries.flatten() {
-                                let path = entry.path();
-                                if path.is_dir() && path.file_name().and_then(|n| n.to_str()).unwrap_or("").starts_with("nodesec-") {
-                                    reports.push(path);
+                    let desktop_dir = std::path::Path::new(&home).join("Desktop");
+                    for report_dir_name in ["Hyntel Reports", "nodesec Reports"] {
+                        let desktop_reports = desktop_dir.join(report_dir_name);
+                        if desktop_reports.exists() {
+                            if let Ok(entries) = std::fs::read_dir(desktop_reports) {
+                                for entry in entries.flatten() {
+                                    let path = entry.path();
+                                    if path.is_dir() && path.file_name().and_then(|n| n.to_str()).unwrap_or("").starts_with("nodesec-") {
+                                        reports.push(path);
+                                    }
                                 }
                             }
                         }
