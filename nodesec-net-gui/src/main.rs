@@ -1437,10 +1437,23 @@ impl App {
                     } else {
                         for report_path in reports.iter().take(10) {
                             let dir_name = report_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                            // Try to parse nodesec-platform-date format, otherwise show raw name
+                            // Parse nodesec-{platform}-{YYYYMMDD}_{HHMMSS}.csv format
                             let parts: Vec<&str> = dir_name.splitn(3, '-').collect();
                             let platform = if parts.len() >= 2 { parts[1] } else { "unknown" };
-                            let date_part = parts.get(2).unwrap_or(&"").to_string();
+                            // Format date: 20261116_202355 -> 2026-11-16 11:23:55
+                            let date_part = if parts.len() >= 3 {
+                                let date_str = parts[2].split('_').next().unwrap_or("");
+                                let time_str = parts[2].split('_').nth(1).unwrap_or("").split('.').next().unwrap_or("");
+                                if date_str.len() == 8 && time_str.len() >= 6 {
+                                    format!("{}-{}-{} {}:{}:{}",
+                                        &date_str[0..4], &date_str[4..6], &date_str[6..8],
+                                        &time_str[0..2], &time_str[2..4], &time_str[4..6])
+                                } else {
+                                    date_str.to_string()
+                                }
+                            } else {
+                                "".to_string()
+                            };
                             ui.label(&dir_name);
                             ui.label(platform);
                             ui.label(&date_part);
