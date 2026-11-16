@@ -18,6 +18,7 @@ const DARK_BG: egui::Color32 = egui::Color32::from_rgb(30, 30, 30);
 
 pub fn stat_card(ui: &mut egui::Ui, label: &str, value: &str, color: egui::Color32) {
     ui.group(|ui| {
+        ui.set_min_width(90.0);
         ui.vertical_centered(|ui| {
             ui.label(egui::RichText::new(value).color(color).size(24.0).strong());
             ui.label(egui::RichText::new(label).color(GRAY).size(12.0));
@@ -823,6 +824,42 @@ pub fn render_dashboard(
     monitor_state: &crate::state::MonitorState,
     _monitoring: bool,
 ) {
+    // Copy all stats out of Mutex guards immediately (don't hold locks during UI rendering)
+    let (total_scanned, active_connections, suspicious, critical) = {
+        let stats = monitor_state.stats.lock().unwrap();
+        let connections = monitor_state.connections.lock().unwrap();
+        (
+            stats.total,
+            connections.len(),
+            stats.suspicious,
+            stats.critical,
+        )
+    };
+
+    // Current stats - at top where empty space is
+    ui.horizontal(|ui| {
+        stat_card(ui, "Total Scanned", &total_scanned.to_string(), WHITE);
+        stat_card(ui, "Active Now", &active_connections.to_string(), GREEN);
+        stat_card(ui, "Suspicious", &suspicious.to_string(), RED);
+        stat_card(ui, "Critical", &critical.to_string(), YELLOW);
+    });
+
+    ui.add_space(10.0);
+
+    // Platform info
+    ui.group(|ui| {
+        ui.heading(egui::RichText::new("Platform Info").color(ORANGE));
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(format!("Platform: {:?}", monitor_state.platform)).color(WHITE).strong());
+            ui.add_space(20.0);
+            ui.label(egui::RichText::new(format!("Total Connections: {}", total_scanned)).color(WHITE));
+            ui.add_space(20.0);
+            ui.label(egui::RichText::new(format!("Suspicious: {}", suspicious)).color(RED));
+        });
+    });
+
+    ui.add_space(10.0);
+
     // Real-time charts
     let conn_history = connection_history.lock().unwrap();
     let threat_history = threat_history.lock().unwrap();
@@ -885,42 +922,6 @@ pub fn render_dashboard(
         }
     });
     
-    ui.add_space(10.0);
-    
-    // Copy all stats out of Mutex guards immediately (don't hold locks during UI rendering)
-    let (total_scanned, active_connections, suspicious, critical) = {
-        let stats = monitor_state.stats.lock().unwrap();
-        let connections = monitor_state.connections.lock().unwrap();
-        (
-            stats.total,
-            connections.len(),
-            stats.suspicious,
-            stats.critical,
-        )
-    };
-
-    // Current stats
-    ui.horizontal(|ui| {
-        stat_card(ui, "Total Scanned", &total_scanned.to_string(), WHITE);
-        stat_card(ui, "Active Now", &active_connections.to_string(), GREEN);
-        stat_card(ui, "Suspicious", &suspicious.to_string(), RED);
-        stat_card(ui, "Critical", &critical.to_string(), YELLOW);
-    });
-
-    ui.add_space(10.0);
-
-    // Platform info
-    ui.group(|ui| {
-        ui.heading(egui::RichText::new("Platform Info").color(ORANGE));
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(format!("Platform: {:?}", monitor_state.platform)).color(WHITE).strong());
-            ui.add_space(20.0);
-            ui.label(egui::RichText::new(format!("Total Connections: {}", total_scanned)).color(WHITE));
-            ui.add_space(20.0);
-            ui.label(egui::RichText::new(format!("Suspicious: {}", suspicious)).color(RED));
-        });
-    });
-
     ui.add_space(10.0);
 
     // Top suspicious processes
