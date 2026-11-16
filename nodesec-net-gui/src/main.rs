@@ -1461,21 +1461,31 @@ impl App {
     }
 
     fn render_dashboard_summary(&mut self, ui: &mut egui::Ui) {
-        let stats = self.monitor_state.stats.lock().unwrap();
-        let connections = self.monitor_state.connections.lock().unwrap();
+        // Copy all stats out of Mutex guards immediately (don't hold locks during UI rendering)
+        let (total, active, suspicious, critical, monitoring) = {
+            let stats = self.monitor_state.stats.lock().unwrap();
+            let connections = self.monitor_state.connections.lock().unwrap();
+            let mon = *self.monitor_state.monitoring.lock().unwrap();
+            (
+                stats.total,
+                connections.len(),
+                stats.suspicious,
+                stats.critical,
+                mon,
+            )
+        };
 
         // Top stat cards row
         ui.horizontal(|ui| {
-            crate::ui::stat_card(ui, "Total Scanned", &stats.total.to_string(), WHITE);
-            crate::ui::stat_card(ui, "Active Now", &connections.len().to_string(), GREEN);
-            crate::ui::stat_card(ui, "Suspicious", &stats.suspicious.to_string(), RED);
-            crate::ui::stat_card(ui, "Critical", &stats.critical.to_string(), RED);
+            crate::ui::stat_card(ui, "Total Scanned", &total.to_string(), WHITE);
+            crate::ui::stat_card(ui, "Active Now", &active.to_string(), GREEN);
+            crate::ui::stat_card(ui, "Suspicious", &suspicious.to_string(), RED);
+            crate::ui::stat_card(ui, "Critical", &critical.to_string(), RED);
         });
 
         ui.separator();
 
         // Monitoring status
-        let monitoring = *self.monitor_state.monitoring.lock().unwrap();
         let status_text = if monitoring { "LIVE MONITORING" } else { "MONITORING STOPPED" };
         let status_color = if monitoring { GREEN } else { YELLOW };
         ui.horizontal(|ui| {
@@ -1487,11 +1497,18 @@ impl App {
 
         // Recent activity
         ui.label(egui::RichText::new("Recent Activity:").color(ORANGE).strong());
-        if connections.is_empty() {
+        let recent_conns: Vec<crate::state::ConnectionItem> = {
+            let connections = self.monitor_state.connections.lock().unwrap();
+            if connections.is_empty() {
+                Vec::new()
+            } else {
+                connections.iter().rev().take(5).cloned().collect()
+            }
+        };
+        if recent_conns.is_empty() {
             ui.label(egui::RichText::new("No connections captured yet.").color(GRAY));
         } else {
-            let recent: Vec<_> = connections.iter().rev().take(5).collect();
-            for item in recent {
+            for item in recent_conns {
                 let conn = &item.connection;
                 let threat_color = item.threat_level.color();
                 ui.horizontal(|ui| {
@@ -1508,11 +1525,15 @@ impl App {
 
         // Connection types breakdown
         use std::collections::HashMap;
-        let mut type_counts: HashMap<String, usize> = HashMap::new();
-        for item in connections.iter() {
-            let proto = format!("{:?}", item.connection.protocol);
-            *type_counts.entry(proto).or_insert(0) += 1;
-        }
+        let type_counts: HashMap<String, usize> = {
+            let connections = self.monitor_state.connections.lock().unwrap();
+            let mut counts: HashMap<String, usize> = HashMap::new();
+            for item in connections.iter() {
+                let proto = format!("{:?}", item.connection.protocol);
+                *counts.entry(proto).or_insert(0) += 1;
+            }
+            counts
+        };
 
         if !type_counts.is_empty() {
             ui.label(egui::RichText::new("By Protocol:").color(ORANGE).strong());
@@ -1690,7 +1711,37 @@ impl eframe::App for App {
                 ] {
                     let selected = self.selected_tab == tab;
                     if ui.selectable_label(selected, tab.label()).clicked() {
-                        self.selected_tab = tab;
+                        self.selected_tab = tab.clone();
+                        // Clear details state so each tab has its own details pane
+                        match tab {
+                            Tab::Connections => {
+                                self.details_selected_pid = None;
+                                self.details_selected_node = None;
+                                self.details_selected_node_text = None;
+                            }
+                            Tab::ProcessTree => {
+                                self.details_selected_conn = None;
+                                self.details_selected_node = None;
+                                self.details_selected_node_text = None;
+                            }
+                            Tab::ConnectionGraph => {
+                                self.details_selected_conn = None;
+                                self.details_selected_pid = None;
+                                self.details_selected_node_text = None;
+                            }
+                            Tab::Dashboard => {
+                                self.details_selected_conn = None;
+                                self.details_selected_pid = None;
+                                self.details_selected_node = None;
+                                self.details_selected_node_text = None;
+                            }
+                            _ => {
+                                self.details_selected_conn = None;
+                                self.details_selected_pid = None;
+                                self.details_selected_node = None;
+                                self.details_selected_node_text = None;
+                            }
+                        }
                     }
                     ui.add_space(8.0);
                 }
