@@ -1717,19 +1717,11 @@ impl eframe::App for App {
             });
         });
 
-        // Bottom status bar
+        // Bottom status bar - app name only
         egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
-                ui.label(egui::RichText::new("Shortcuts: ").color(GRAY));
-                ui.label(egui::RichText::new("1-7 ").color(ORANGE).strong()).on_hover_text("Switch tabs");
-                ui.label(egui::RichText::new("Tab ").color(ORANGE).strong()).on_hover_text("Next tab");
-                ui.label(egui::RichText::new("Click ").color(ORANGE).strong()).on_hover_text("Select row");
-                ui.label(egui::RichText::new("Scroll ").color(ORANGE).strong()).on_hover_text("Mouse wheel");
-                ui.label(egui::RichText::new("Space ").color(ORANGE).strong()).on_hover_text("Pause");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(egui::RichText::new("Nodesec v0.1.0").color(GRAY));
-                });
+                ui.label(egui::RichText::new("Nodesec v0.1.0").color(GRAY));
             });
         });
 
