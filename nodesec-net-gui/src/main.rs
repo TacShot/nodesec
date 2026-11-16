@@ -298,7 +298,7 @@ impl App {
                 ui.add_space(2.0);
 
                 // Sel column
-                if ui.small_button("conn_sel_btn").clicked() {
+                if ui.small_button("Sel").clicked() {
                     // No sort for selection column
                 }
                 ui.add_space(8.0);
