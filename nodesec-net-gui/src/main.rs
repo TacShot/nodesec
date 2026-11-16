@@ -678,7 +678,9 @@ impl App {
         );
 
         // Draw process cells left-to-right
-        egui::ScrollArea::horizontal().show(ui, |ui| {
+        egui::ScrollArea::horizontal()
+            .id_source("process_tree_scroll")
+            .show(ui, |ui| {
             ui.set_min_size(egui::vec2(total_width + cell_spacing * 2.0, cell_height + 40.0));
 
             for (i, (key, conns, threat_score)) in processes.iter().enumerate() {
@@ -756,33 +758,6 @@ impl App {
             }
         });
 
-        // Details panel for selected process
-        if let Some(pid) = self.selected_process {
-            let all_conns: Vec<crate::state::ConnectionItem> = self
-                .monitor_state
-                .connections
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|item| item.connection.pid == pid)
-                .cloned()
-                .collect();
-
-            if let Some(proc_item) = all_conns.first() {
-                ui.separator();
-                let proc = crate::state::ProcessTreeItem {
-                    pid,
-                    name: proc_item.connection.process_name.clone(),
-                    path: proc_item.connection.process_path.clone(),
-                    user: proc_item.connection.user.clone(),
-                    connections: all_conns.iter().map(|c| c.connection.clone()).collect(),
-                    children: Vec::new(),
-                    total_threat_score: proc_item.connection.threat_score,
-                    is_suspicious: proc_item.connection.is_suspicious,
-                };
-                self.render_process_detail(ui, &proc);
-            }
-        }
     }
 
     fn render_connection_graph(&mut self, ui: &mut egui::Ui) {
@@ -1404,17 +1379,11 @@ impl App {
             ui.separator();
 
             ui.horizontal(|ui| {
-                if ui.button("reports_list_btn").clicked() {
-                    // Will auto-list below
-                }
+                ui.button("List Reports").clicked();
                 ui.add_space(8.0);
-                if ui.button("reports_export_btn").clicked() {
-                    // Export functionality
-                }
+                ui.button("Export Report").clicked();
                 ui.add_space(8.0);
-                if ui.button("reports_delete_btn").clicked() {
-                    // Delete functionality
-                }
+                ui.button("Delete Report").clicked();
             });
 
             ui.separator();
@@ -1445,8 +1414,11 @@ impl App {
                             if let Ok(entries) = std::fs::read_dir(desktop_reports) {
                                 for entry in entries.flatten() {
                                     let path = entry.path();
-                                    if path.is_dir() && path.file_name().and_then(|n| n.to_str()).unwrap_or("").starts_with("nodesec-") {
-                                        reports.push(path);
+                                    if path.is_dir() {
+                                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                                        if name.starts_with("nodesec-") || name.starts_with("nodesec ") {
+                                            reports.push(path);
+                                        }
                                     }
                                 }
                             }
