@@ -18,10 +18,11 @@ const DARK_BG: egui::Color32 = egui::Color32::from_rgb(30, 30, 30);
 
 pub fn stat_card(ui: &mut egui::Ui, label: &str, value: &str, color: egui::Color32) {
     ui.group(|ui| {
-        ui.set_min_width(90.0);
+        ui.set_min_width(70.0);
+        ui.set_max_width(90.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new(value).color(color).size(24.0).strong());
-            ui.label(egui::RichText::new(label).color(GRAY).size(12.0));
+            ui.label(egui::RichText::new(value).color(color).size(18.0).strong());
+            ui.label(egui::RichText::new(label).color(GRAY).size(10.0));
         });
     });
 }
@@ -837,11 +838,39 @@ pub fn render_dashboard(
     };
 
     // Current stats - at top where empty space is
-    ui.horizontal(|ui| {
-        stat_card(ui, "Total Scanned", &total_scanned.to_string(), WHITE);
-        stat_card(ui, "Active Now", &active_connections.to_string(), GREEN);
-        stat_card(ui, "Suspicious", &suspicious.to_string(), RED);
-        stat_card(ui, "Critical", &critical.to_string(), YELLOW);
+    ui.columns(4, |columns| {
+        columns[0].group(|ui| {
+            ui.set_min_width(60.0);
+            ui.set_max_width(90.0);
+            ui.vertical_centered(|ui| {
+                ui.label(egui::RichText::new(&total_scanned.to_string()).color(WHITE).size(18.0).strong());
+                ui.label(egui::RichText::new("Total Scanned").color(GRAY).size(10.0));
+            });
+        });
+        columns[1].group(|ui| {
+            ui.set_min_width(60.0);
+            ui.set_max_width(90.0);
+            ui.vertical_centered(|ui| {
+                ui.label(egui::RichText::new(&active_connections.to_string()).color(GREEN).size(18.0).strong());
+                ui.label(egui::RichText::new("Active Now").color(GRAY).size(10.0));
+            });
+        });
+        columns[2].group(|ui| {
+            ui.set_min_width(60.0);
+            ui.set_max_width(90.0);
+            ui.vertical_centered(|ui| {
+                ui.label(egui::RichText::new(&suspicious.to_string()).color(RED).size(18.0).strong());
+                ui.label(egui::RichText::new("Suspicious").color(GRAY).size(10.0));
+            });
+        });
+        columns[3].group(|ui| {
+            ui.set_min_width(60.0);
+            ui.set_max_width(90.0);
+            ui.vertical_centered(|ui| {
+                ui.label(egui::RichText::new(&critical.to_string()).color(YELLOW).size(18.0).strong());
+                ui.label(egui::RichText::new("Critical").color(GRAY).size(10.0));
+            });
+        });
     });
 
     ui.add_space(10.0);
