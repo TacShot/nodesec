@@ -920,9 +920,9 @@ pub fn render_dashboard(
             ui.label(egui::RichText::new(format!("Suspicious: {}", suspicious)).color(RED));
         });
     });
-    
+
     ui.add_space(10.0);
-    
+
     // Top suspicious processes
     ui.group(|ui| {
         ui.heading(egui::RichText::new("Top Suspicious Processes").color(ORANGE));

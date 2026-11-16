@@ -506,8 +506,8 @@ impl App {
             ui.add_space(4.0);
 
             let proc_sort_icon = match self.proc_sort_dir {
-                SortDir::Asc => "▲",
-                SortDir::Desc => "▼",
+                SortDir::Asc => "A",
+                SortDir::Desc => "D",
             };
 
             if ui.button(format!("Threat {}", proc_sort_icon)).clicked() {
@@ -665,11 +665,8 @@ impl App {
             WHITE,
         );
 
-        // Draw process cells left-to-right
-        egui::ScrollArea::horizontal()
-            .id_source("process_tree_scroll")
-            .show(ui, |ui| {
-            ui.set_min_size(egui::vec2(total_width + cell_spacing * 2.0, cell_height + 40.0));
+        // Draw process cells left-to-right (scrollable via outer ScrollArea)
+        ui.set_min_size(egui::vec2(total_width + cell_spacing * 2.0, cell_height + 40.0));
 
             for (i, (key, conns, threat_score)) in processes.iter().enumerate() {
                 let cell_x = start_x + i as f32 * (cell_width + cell_spacing);
@@ -744,7 +741,6 @@ impl App {
                     self.details_selected_tab = Tab::ProcessTree;
                 }
             }
-        });
 
     }
 
@@ -1722,7 +1718,8 @@ impl eframe::App for App {
 
         // Main content area
         egui::CentralPanel::default().show(ctx, |ui| {
-            match self.selected_tab {
+            egui::ScrollArea::both().show(ui, |ui| {
+                match self.selected_tab {
                 Tab::Dashboard => self.render_dashboard(ui),
                 Tab::Connections => self.render_connections(ui),
                 Tab::ProcessTree => self.render_process_tree(ui),
@@ -1735,7 +1732,8 @@ impl eframe::App for App {
                 Tab::Settings => self.render_settings(ui),
             }
         });
-    }
+    });
+}
 }
 
 pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
