@@ -408,9 +408,34 @@ pub struct ConnectedDevice {
     pub product_id: Option<String>,
     pub vendor_id: Option<String>,
     pub serial_number: Option<String>,
+    pub driver: Option<String>,
+    pub bus_location: Option<String>,
+    pub entry_id: Option<u64>,
+    pub is_hub: bool,
     pub connected_at: u64,
     pub last_seen: u64,
     pub is_connected: bool,
+}
+
+impl Default for ConnectedDevice {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            device_type: DeviceType::Other(String::new()),
+            vendor: None,
+            product_id: None,
+            vendor_id: None,
+            serial_number: None,
+            driver: None,
+            bus_location: None,
+            entry_id: None,
+            is_hub: false,
+            connected_at: 0,
+            last_seen: 0,
+            is_connected: false,
+        }
+    }
 }
 
 

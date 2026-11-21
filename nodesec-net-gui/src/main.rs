@@ -958,22 +958,51 @@ impl App {
                 };
 
                 ui.group(|ui| {
+                    // Header row: type + name
                     ui.horizontal(|ui| {
                         ui.colored_label(type_color, egui::RichText::new(format!("{:?}", device.device_type)).strong());
                         ui.add_space(8.0);
-                        ui.label(egui::RichText::new(&device.name).strong());
+                        if device.is_hub {
+                            ui.label(egui::RichText::new("🔌 ").size(12.0));
+                        }
+                        ui.label(egui::RichText::new(&device.name).strong().size(13.0));
                     });
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new(format!("ID: {}", device.id)).color(GRAY).size(10.0));
-                    ui.add_space(8.0);
-                    if let Some(vendor) = &device.vendor {
-                        ui.label(egui::RichText::new(format!("Vendor: {}", vendor)).color(GRAY).size(10.0));
-                    }
-                    ui.add_space(8.0);
-                    if let Some(pid) = &device.product_id {
-                        ui.label(egui::RichText::new(format!("PID: {}", pid)).color(GRAY).size(10.0));
-                    }
-                    ui.add_space(8.0);
+
+                    // Details row 1: ID, driver, bus location
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(format!("ID: {}", device.id)).color(GRAY).size(10.0));
+                        ui.add_space(10.0);
+                        if let Some(driver) = &device.driver {
+                            ui.label(egui::RichText::new(format!("Driver: {}", driver)).color(GRAY).size(10.0));
+                            ui.add_space(10.0);
+                        }
+                        if let Some(bus) = &device.bus_location {
+                            ui.label(egui::RichText::new(format!("Bus: {}", bus)).color(GRAY).size(10.0));
+                            ui.add_space(10.0);
+                        }
+                        if let Some(entry_id) = device.entry_id {
+                            ui.label(egui::RichText::new(format!("EntryID: {}", entry_id)).color(GRAY).size(10.0));
+                        }
+                    });
+
+                    // Details row 2: vendor ID, product ID, serial
+                    ui.horizontal(|ui| {
+                        if let Some(vid) = &device.vendor_id {
+                            ui.label(egui::RichText::new(format!("VID: {}", vid)).color(GRAY).size(10.0));
+                            ui.add_space(10.0);
+                        }
+                        if let Some(pid) = &device.product_id {
+                            ui.label(egui::RichText::new(format!("PID: {}", pid)).color(GRAY).size(10.0));
+                            ui.add_space(10.0);
+                        }
+                        if let Some(serial) = &device.serial_number {
+                            ui.label(egui::RichText::new(format!("Serial: {}", serial)).color(GRAY).size(10.0));
+                        }
+                    });
+
+                    // Status
+                    ui.add_space(2.0);
                     let status_color = if device.is_connected { GREEN } else { RED };
                     ui.colored_label(status_color, if device.is_connected { "Connected" } else { "Disconnected" });
                 });
@@ -1999,43 +2028,98 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
     {
         let mut devices = Vec::new();
 
-        // USB devices via ioreg (primary method - works on all macOS versions)
+        // USB devices via ioreg → plutil → JSON (primary method - works on all macOS versions)
         // system_profiler SPUSBDataType -json returns empty [] on some macOS versions
-        if let Ok(output) = std::process::Command::new("ioreg")
-            .args(["-p", "IOUSB", "-w0"])
+        if let Ok(ioreg_output) = std::process::Command::new("ioreg")
+            .args(["-p", "IOUSB", "-w0", "-a"])
             .output()
         {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                // ioreg -p IOUSB -w0 format: "+-o DeviceName@address  <class ...>"
-                // or "| +-o DeviceName@address  <class ...>" for children
-                if let Some(start) = line.find("+-o ") {
-                    let after_o = &line[start + 4..];
-                    // Device name is before @address
-                    if let Some(at_pos) = after_o.find('@') {
-                        let name = after_o[..at_pos].trim();
-                        if !name.is_empty() && name != "Root" {
-                            devices.push(nodesec_core::models::ConnectedDevice {
-                                id: format!("ioreg:{}", name),
-                                name: name.to_string(),
-                                device_type: nodesec_core::models::DeviceType::Usb,
-                                vendor: None,
-                                product_id: None,
-                                vendor_id: None,
-                                serial_number: None,
-                                connected_at: std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_secs(),
-                                last_seen: std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_secs(),
-                                is_connected: true,
-                            });
+            let temp_path = std::env::temp_dir().join("nodesec_usb.plist");
+            if std::fs::write(&temp_path, &ioreg_output.stdout).is_ok() {
+                if let Ok(plutil_output) = std::process::Command::new("plutil")
+                    .args(["-convert", "json", "-o", "-", temp_path.to_str().unwrap_or("")])
+                    .output()
+                {
+                    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&plutil_output.stdout) {
+                        // Walk the ioreg tree recursively
+                        fn walk_usb_tree(
+                            node: &serde_json::Value,
+                            devices: &mut Vec<nodesec_core::models::ConnectedDevice>,
+                        ) {
+                            let name = node
+                                .get("IORegistryEntryName")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown USB Device")
+                                .to_string();
+                            let cls = node
+                                .get("IOObjectClass")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("IOUSBDevice")
+                                .to_string();
+                            let bus_location = node
+                                .get("IORegistryEntryLocation")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            let entry_id = node
+                                .get("IORegistryEntryID")
+                                .and_then(|v| v.as_u64());
+
+                            let is_hub = name.to_lowercase().contains("hub")
+                                || name.to_lowercase().contains("host controller")
+                                || name.to_lowercase().contains("xhci")
+                                || name.to_lowercase().contains("ehci")
+                                || cls.contains("Hub");
+
+                            // Only add leaf devices and hubs (skip the root controller container)
+                            if name != "Root" && !name.is_empty() {
+                                devices.push(nodesec_core::models::ConnectedDevice {
+                                    id: format!("ioreg:{}", entry_id.unwrap_or(0)),
+                                    name: name.clone(),
+                                    device_type: nodesec_core::models::DeviceType::Usb,
+                                    vendor: None,
+                                    product_id: None,
+                                    vendor_id: None,
+                                    serial_number: None,
+                                    driver: Some(cls),
+                                    bus_location,
+                                    entry_id,
+                                    is_hub,
+                                    connected_at: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs(),
+                                    last_seen: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs(),
+                                    is_connected: true,
+                                });
+                            }
+
+                            // Recurse into children
+                            if let Some(children) = node
+                                .get("IORegistryEntryChildren")
+                                .and_then(|v| v.as_array())
+                            {
+                                for child in children {
+                                    walk_usb_tree(child, devices);
+                                }
+                            }
+                        }
+
+                        // ioreg -p IOUSB returns a dict with IORegistryEntryChildren
+                        if let Some(children) = json
+                            .get("IORegistryEntryChildren")
+                            .and_then(|v| v.as_array())
+                        {
+                            for child in children {
+                                walk_usb_tree(child, &mut devices);
+                            }
                         }
                     }
                 }
+                // Clean up temp file
+                let _ = std::fs::remove_file(&temp_path);
             }
         }
 
@@ -2065,6 +2149,10 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                                 product_id: current_product_id.clone(),
                                 vendor_id: current_vendor_id.clone(),
                                 serial_number: current_serial.clone(),
+                                driver: None,
+                                bus_location: None,
+                                entry_id: None,
+                                is_hub: name.to_lowercase().contains("hub"),
                                 connected_at: std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap_or_default()
@@ -2098,6 +2186,10 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                         product_id: current_product_id.clone(),
                         vendor_id: current_vendor_id.clone(),
                         serial_number: current_serial.clone(),
+                        driver: None,
+                        bus_location: None,
+                        entry_id: None,
+                        is_hub: name.to_lowercase().contains("hub"),
                         connected_at: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
@@ -2133,6 +2225,10 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                                         product_id: None,
                                         vendor_id: None,
                                         serial_number: address.clone(),
+                                        driver: None,
+                                        bus_location: None,
+                                        entry_id: None,
+                                        is_hub: false,
                                         connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
                                         last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
                                         is_connected: true,
@@ -2155,6 +2251,10 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                                         product_id: None,
                                         vendor_id: None,
                                         serial_number: address,
+                                        driver: None,
+                                        bus_location: None,
+                                        entry_id: None,
+                                        is_hub: false,
                                         connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
                                         last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
                                         is_connected: false,
@@ -2197,6 +2297,10 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                             product_id: Some(product_id),
                             vendor_id: Some(vendor_id),
                             serial_number: None,
+                            driver: None,
+                            bus_location: None,
+                            entry_id: None,
+                            is_hub: false,
                             connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
                             last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
                             is_connected: true,
@@ -2223,6 +2327,10 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                     product_id: None,
                     vendor_id: None,
                     serial_number: Some(address),
+                    driver: None,
+                    bus_location: None,
+                    entry_id: None,
+                    is_hub: false,
                     connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
                     last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
                     is_connected: true,
@@ -2259,6 +2367,10 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                         product_id: pid,
                         vendor_id: vid,
                         serial_number: None,
+                        driver: None,
+                        bus_location: None,
+                        entry_id: None,
+                        is_hub: false,
                         connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
                         last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
                         is_connected: status == "OK",
@@ -2287,6 +2399,10 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                         product_id: None,
                         vendor_id: None,
                         serial_number: Some(instance_id),
+                        driver: None,
+                        bus_location: None,
+                        entry_id: None,
+                        is_hub: false,
                         connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
                         last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
                         is_connected: status == "OK",
