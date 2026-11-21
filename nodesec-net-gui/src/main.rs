@@ -1188,7 +1188,10 @@ impl App {
         ui.separator();
 
         // Copy all needed values from audit_state (release lock before egui closures)
-        let (is_scanning, scan_complete, compliance_cis, compliance_nist, compliance_pci_dss, enable_nvd, audit_results, findings_count, suspicious_count, critical_count) = {
+        let (is_scanning, scan_complete, compliance_cis, compliance_nist, compliance_pci_dss,
+             compliance_iso_27001, compliance_iso_27005, scan_applications, scan_ad_security,
+             scan_devices, enable_nvd, audit_results, findings_count, suspicious_count,
+             critical_count) = {
             let state = self.monitor_state.audit_state.lock().unwrap();
             (
                 state.is_scanning,
@@ -1196,6 +1199,11 @@ impl App {
                 state.compliance_cis,
                 state.compliance_nist,
                 state.compliance_pci_dss,
+                state.compliance_iso_27001,
+                state.compliance_iso_27005,
+                state.scan_applications,
+                state.scan_ad_security,
+                state.scan_devices,
                 state.enable_nvd,
                 state.audit_results.clone(),
                 state.findings_count,
@@ -1208,12 +1216,36 @@ impl App {
         let scan_btn_text = if is_scanning {
             "[ Scanning... ]"
         } else {
-            "[ Run Full Audit ]"
+            "[ Run Audit ]"
         };
 
         ui.group(|ui| {
             ui.heading(egui::RichText::new("Audit Configuration").color(ORANGE));
             ui.separator();
+
+            // Scan options as checkboxes (like compliance standards)
+            ui.label(egui::RichText::new("Scan Options:").color(WHITE).strong());
+            ui.horizontal(|ui| {
+                let mut apps_checked = scan_applications;
+                if ui.checkbox(&mut apps_checked, "Scan Applications").changed() {
+                    let mut state = self.monitor_state.audit_state.lock().unwrap();
+                    state.scan_applications = apps_checked;
+                }
+                ui.add_space(8.0);
+                let mut ad_checked = scan_ad_security;
+                if ui.checkbox(&mut ad_checked, "Scan AD Security").changed() {
+                    let mut state = self.monitor_state.audit_state.lock().unwrap();
+                    state.scan_ad_security = ad_checked;
+                }
+                ui.add_space(8.0);
+                let mut dev_checked = scan_devices;
+                if ui.checkbox(&mut dev_checked, "Scan USB/Bluetooth Devices").changed() {
+                    let mut state = self.monitor_state.audit_state.lock().unwrap();
+                    state.scan_devices = dev_checked;
+                }
+            });
+
+            ui.add_space(8.0);
 
             if ui.button(scan_btn_text).clicked() && !is_scanning {
                 // Re-lock to mutate
@@ -1229,6 +1261,11 @@ impl App {
                 let compliance_cis = state.compliance_cis;
                 let compliance_nist = state.compliance_nist;
                 let compliance_pci_dss = state.compliance_pci_dss;
+                let compliance_iso_27001 = state.compliance_iso_27001;
+                let compliance_iso_27005 = state.compliance_iso_27005;
+                let scan_apps = state.scan_applications;
+                let scan_ad = state.scan_ad_security;
+                let scan_dev = state.scan_devices;
                 let enable_nvd = state.enable_nvd;
                 drop(state);
 
@@ -1243,6 +1280,8 @@ impl App {
                     if compliance_cis { standards.push("CIS".to_string()); }
                     if compliance_nist { standards.push("NIST".to_string()); }
                     if compliance_pci_dss { standards.push("PCI-DSS".to_string()); }
+                    if compliance_iso_27001 { standards.push("ISO-27001".to_string()); }
+                    if compliance_iso_27005 { standards.push("ISO-27005".to_string()); }
                     let standards_filter = if standards.is_empty() { None } else { Some(standards) };
 
                     match AuditEngine::new(standards_filter, None) {
@@ -1254,13 +1293,14 @@ impl App {
                                 enable_nvd,                        // include_cves
                                 50,                                // cve_limit
                                 true,                              // generate_remediation
-                                true,                              // scan_apps
+                                scan_apps,                         // scan_apps
                                 100,                               // app_limit
                                 true,                              // save_to_desktop
                                 output_dir,                        // output_dir
                                 false,                             // collect_logs
                                 0,                                 // log_hours
-                                false,                             // scan_ad
+                                scan_ad,                           // scan_ad
+                                scan_dev,                          // scan_devices
                             ) {
                                 Ok(report) => {
                                     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1299,15 +1339,6 @@ impl App {
                     }
                 });
             }
-            ui.add_space(8.0);
-
-            if ui.button("[ Scan Applications ]").clicked() {
-                // TODO
-            }
-            ui.add_space(8.0);
-            if ui.button("[ Scan AD Security ]").clicked() {
-                // TODO
-            }
         });
 
         ui.separator();
@@ -1329,6 +1360,18 @@ impl App {
             if ui.checkbox(&mut pci_checked, "PCI-DSS").changed() {
                 let mut state = self.monitor_state.audit_state.lock().unwrap();
                 state.compliance_pci_dss = pci_checked;
+            }
+            ui.add_space(8.0);
+            let mut iso27001_checked = compliance_iso_27001;
+            if ui.checkbox(&mut iso27001_checked, "ISO-27001").changed() {
+                let mut state = self.monitor_state.audit_state.lock().unwrap();
+                state.compliance_iso_27001 = iso27001_checked;
+            }
+            ui.add_space(8.0);
+            let mut iso27005_checked = compliance_iso_27005;
+            if ui.checkbox(&mut iso27005_checked, "ISO-27005").changed() {
+                let mut state = self.monitor_state.audit_state.lock().unwrap();
+                state.compliance_iso_27005 = iso27005_checked;
             }
         });
 
@@ -1389,6 +1432,39 @@ impl App {
         ui.label(egui::RichText::new("View, export, and manage security reports").color(GRAY).size(11.0));
         ui.separator();
 
+        // Collect report directories
+        let mut reports: Vec<std::path::PathBuf> = Vec::new();
+        let artifacts_dir = std::path::Path::new("artifacts");
+        if artifacts_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(artifacts_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() && path.file_name().and_then(|n| n.to_str()).unwrap_or("").starts_with("nodesec-") {
+                        reports.push(path);
+                    }
+                }
+                reports.sort_by(|a, b| b.cmp(a)); // newest first
+            }
+        }
+
+        if reports.is_empty() {
+            if let Ok(home) = std::env::var("HOME") {
+                let desktop_dir = std::path::Path::new(&home).join("Desktop");
+                for report_dir_name in ["Hyntel Reports", "nodesec Reports"] {
+                    let desktop_reports = desktop_dir.join(report_dir_name);
+                    if desktop_reports.exists() {
+                        if let Ok(entries) = std::fs::read_dir(desktop_reports) {
+                            for entry in entries.flatten() {
+                                let path = entry.path();
+                                reports.push(path);
+                            }
+                        }
+                    }
+                }
+                reports.sort_by(|a, b| b.cmp(a));
+            }
+        }
+
         ui.group(|ui| {
             ui.heading(egui::RichText::new("Report Management").color(ORANGE));
             ui.separator();
@@ -1404,47 +1480,13 @@ impl App {
             ui.separator();
             ui.label(egui::RichText::new("Recent Reports:").color(ORANGE).strong());
 
-            // List reports from artifacts directory
-            let artifacts_dir = std::path::Path::new("artifacts");
-            let mut reports: Vec<std::path::PathBuf> = Vec::new();
-            if artifacts_dir.exists() {
-                if let Ok(entries) = std::fs::read_dir(artifacts_dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.is_dir() && path.file_name().and_then(|n| n.to_str()).unwrap_or("").starts_with("nodesec-") {
-                            reports.push(path);
-                        }
-                    }
-                    reports.sort_by(|a, b| b.cmp(a)); // newest first
-                }
-            }
-
-            if reports.is_empty() {
-                // Also check Desktop/Hyntel Reports and Desktop/nodesec Reports
-                if let Ok(home) = std::env::var("HOME") {
-                    let desktop_dir = std::path::Path::new(&home).join("Desktop");
-                    for report_dir_name in ["Hyntel Reports", "nodesec Reports"] {
-                        let desktop_reports = desktop_dir.join(report_dir_name);
-                        if desktop_reports.exists() {
-                            if let Ok(entries) = std::fs::read_dir(desktop_reports) {
-                                for entry in entries.flatten() {
-                                    let path = entry.path();
-                                    // Accept any item inside the Reports folder
-                                    reports.push(path);
-                                }
-                            }
-                        }
-                    }
-                }
-                reports.sort_by(|a, b| b.cmp(a));
-            }
-
             egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                egui::Grid::new("reports_grid").num_columns(4).striped(true).show(ui, |ui| {
+                egui::Grid::new("reports_grid").num_columns(5).striped(true).show(ui, |ui| {
                     ui.label(egui::RichText::new("Report").color(ORANGE).strong());
                     ui.label(egui::RichText::new("Platform").color(ORANGE).strong());
                     ui.label(egui::RichText::new("Date").color(ORANGE).strong());
                     ui.label(egui::RichText::new("Format").color(ORANGE).strong());
+                    ui.label(egui::RichText::new("Action").color(ORANGE).strong());
                     ui.end_row();
 
                     if reports.is_empty() {
@@ -1452,10 +1494,8 @@ impl App {
                     } else {
                         for report_path in reports.iter().take(10) {
                             let dir_name = report_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                            // Parse nodesec-{platform}-{YYYYMMDD}_{HHMMSS}.csv format
                             let parts: Vec<&str> = dir_name.splitn(3, '-').collect();
                             let platform = if parts.len() >= 2 { parts[1] } else { "unknown" };
-                            // Format date: 20261116_202355 -> 2026-11-16 11:23:55
                             let date_part = if parts.len() >= 3 {
                                 let date_str = parts[2].split('_').next().unwrap_or("");
                                 let time_str = parts[2].split('_').nth(1).unwrap_or("").split('.').next().unwrap_or("");
@@ -1469,16 +1509,194 @@ impl App {
                             } else {
                                 "".to_string()
                             };
+
                             ui.label(&dir_name);
                             ui.label(platform);
                             ui.label(&date_part);
                             ui.label("TXT/JSON/CSV");
+
+                            // View report button
+                            let report_path_clone = report_path.to_string_lossy().to_string();
+                            let is_selected = self.monitor_state.audit_state.lock().unwrap().selected_report.as_ref() == Some(&report_path_clone);
+                            drop(self.monitor_state.audit_state.lock().unwrap());
+
+                            if ui.button(if is_selected { "Viewing..." } else { "View" }).clicked() {
+                                let mut state = self.monitor_state.audit_state.lock().unwrap();
+                                state.selected_report = Some(report_path_clone);
+                            }
+
                             ui.end_row();
                         }
                     }
                 });
             });
         });
+
+        // Report viewer - show details of selected report
+        let selected_report_path = {
+            let state = self.monitor_state.audit_state.lock().unwrap();
+            state.selected_report.clone()
+        };
+
+        if let Some(ref report_path) = selected_report_path {
+            ui.separator();
+            ui.group(|ui| {
+                ui.heading(egui::RichText::new("Report Viewer").color(ORANGE).strong());
+                ui.horizontal(|ui| {
+                    if ui.button("Close Viewer").clicked() {
+                        let mut state = self.monitor_state.audit_state.lock().unwrap();
+                        state.selected_report = None;
+                    }
+                    ui.add_space(16.0);
+                    ui.label(egui::RichText::new(format!("Report: {}", report_path)).color(GRAY).size(10.0));
+                });
+                ui.separator();
+
+                // Try to read and display report JSON
+                let report_json_path = std::path::Path::new(report_path).join("report.json");
+                if report_json_path.exists() {
+                    if let Ok(contents) = std::fs::read_to_string(&report_json_path) {
+                        if let Ok(report) = serde_json::from_str::<serde_json::Value>(&contents) {
+                            ui.label(egui::RichText::new("Scan Results").color(ORANGE).strong());
+                            ui.add_space(4.0);
+
+                            // Summary
+                            if let Some(summary) = report.get("summary") {
+                                let passed = summary.get("passed").and_then(|v| v.as_u64()).unwrap_or(0);
+                                let failed = summary.get("failed").and_then(|v| v.as_u64()).unwrap_or(0);
+                                let skipped = summary.get("skipped").and_then(|v| v.as_u64()).unwrap_or(0);
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(format!("Passed: {}", passed)).color(GREEN));
+                                    ui.add_space(16.0);
+                                    ui.colored_label(RED, format!("Failed: {}", failed));
+                                    ui.add_space(16.0);
+                                    ui.label(egui::RichText::new(format!("Skipped: {}", skipped)).color(YELLOW));
+                                });
+                                ui.separator();
+                            }
+
+                            // Device findings
+                            if let Some(devices) = report.get("device_findings") {
+                                if let Some(dev_arr) = devices.as_array() {
+                                    if !dev_arr.is_empty() {
+                                        ui.label(egui::RichText::new(format!("Connected Devices ({})", dev_arr.len())).color(ORANGE).strong());
+                                        ui.add_space(4.0);
+                                        egui::Grid::new("report_devices").num_columns(5).striped(true).show(ui, |ui| {
+                                            ui.label(egui::RichText::new("Name").color(ORANGE).strong());
+                                            ui.label(egui::RichText::new("Type").color(ORANGE).strong());
+                                            ui.label(egui::RichText::new("Driver").color(ORANGE).strong());
+                                            ui.label(egui::RichText::new("Bus Location").color(ORANGE).strong());
+                                            ui.label(egui::RichText::new("Status").color(ORANGE).strong());
+                                            ui.end_row();
+                                            for dev in dev_arr.iter().take(20) {
+                                                let name = dev.get("name").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                                                let dev_type = dev.get("device_type").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                                                let driver = dev.get("driver").and_then(|v| v.as_str()).unwrap_or("N/A");
+                                                let bus = dev.get("bus_location").and_then(|v| v.as_str()).unwrap_or("N/A");
+                                                let connected = dev.get("is_connected").and_then(|v| v.as_bool()).unwrap_or(false);
+                                                ui.label(name);
+                                                ui.label(dev_type);
+                                                ui.label(driver);
+                                                ui.label(bus);
+                                                if connected {
+                                                    ui.colored_label(GREEN, "Connected");
+                                                } else {
+                                                    ui.colored_label(RED, "Disconnected");
+                                                }
+                                                ui.end_row();
+                                            }
+                                        });
+                                        ui.separator();
+                                    }
+                                }
+                            }
+
+                            // Network connections
+                            if let Some(conns) = report.get("network_connections") {
+                                if let Some(conn_arr) = conns.as_array() {
+                                    if !conn_arr.is_empty() {
+                                        ui.label(egui::RichText::new(format!("Network Connections ({})", conn_arr.len())).color(ORANGE).strong());
+                                        ui.add_space(4.0);
+                                        egui::Grid::new("report_conns").num_columns(6).striped(true).show(ui, |ui| {
+                                            ui.label(egui::RichText::new("Process").color(ORANGE).strong());
+                                            ui.label(egui::RichText::new("PID").color(ORANGE).strong());
+                                            ui.label(egui::RichText::new("Source").color(ORANGE).strong());
+                                            ui.label(egui::RichText::new("Destination").color(ORANGE).strong());
+                                            ui.label(egui::RichText::new("Proto").color(ORANGE).strong());
+                                            ui.label(egui::RichText::new("Threat").color(ORANGE).strong());
+                                            ui.end_row();
+                                            for conn in conn_arr.iter().take(20) {
+                                                let proc = conn.get("process_name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                                let pid = conn.get("pid").and_then(|v| v.as_u64()).unwrap_or(0);
+                                                let src = format!("{}:{}",
+                                                    conn.get("src_ip").and_then(|v| v.as_str()).unwrap_or("?"),
+                                                    conn.get("src_port").and_then(|v| v.as_u64()).unwrap_or(0));
+                                                let dst = format!("{}:{}",
+                                                    conn.get("dst_ip").and_then(|v| v.as_str()).unwrap_or("?"),
+                                                    conn.get("dst_port").and_then(|v| v.as_u64()).unwrap_or(0));
+                                                let proto = conn.get("protocol").and_then(|v| v.as_str()).unwrap_or("?");
+                                                let threat = conn.get("threat_score").and_then(|v| v.as_u64()).unwrap_or(0);
+                                                ui.label(proc);
+                                                ui.label(pid.to_string());
+                                                ui.label(src);
+                                                ui.label(dst);
+                                                ui.label(proto);
+                                                let threat_color = if threat > 75 { RED } else if threat > 50 { ORANGE } else if threat > 25 { YELLOW } else { GREEN };
+                                                ui.colored_label(threat_color, threat.to_string());
+                                                ui.end_row();
+                                            }
+                                        });
+                                        ui.separator();
+                                    }
+                                }
+                            }
+
+                            // AD findings
+                            if let Some(ad) = report.get("ad_findings") {
+                                if let Some(ad_arr) = ad.as_array() {
+                                    if !ad_arr.is_empty() {
+                                        ui.label(egui::RichText::new(format!("Active Directory Findings ({})", ad_arr.len())).color(ORANGE).strong());
+                                        ui.add_space(4.0);
+                                        for finding in ad_arr.iter().take(10) {
+                                            let desc = finding.get("description").and_then(|v| v.as_str()).unwrap_or("AD finding");
+                                            ui.label(egui::RichText::new(desc).size(10.0));
+                                        }
+                                        ui.separator();
+                                    }
+                                }
+                            }
+
+                            // Application findings
+                            if let Some(apps) = report.get("application_findings") {
+                                if let Some(app_arr) = apps.as_array() {
+                                    if !app_arr.is_empty() {
+                                        ui.label(egui::RichText::new(format!("Application Findings ({})", app_arr.len())).color(ORANGE).strong());
+                                        ui.add_space(4.0);
+                                        for app in app_arr.iter().take(10) {
+                                            let app_name = app.get("application").and_then(|v| v.get("name").and_then(|v| v.as_str())).unwrap_or("unknown");
+                                            ui.label(egui::RichText::new(app_name).size(10.0));
+                                        }
+                                        ui.separator();
+                                    }
+                                }
+                            }
+
+                            if report.get("results").is_some() || report.get("summary").is_some() {
+                                ui.label(egui::RichText::new("Full report JSON available at:").color(GRAY).size(10.0));
+                                ui.label(egui::RichText::new(report_path).color(GRAY).size(9.0));
+                            }
+                        } else {
+                            ui.label(egui::RichText::new("Failed to parse report JSON").color(RED));
+                        }
+                    } else {
+                        ui.label(egui::RichText::new("Failed to read report file").color(RED));
+                    }
+                } else {
+                    ui.label(egui::RichText::new("No report.json found in report directory").color(GRAY));
+                    ui.label(egui::RichText::new(report_path).color(GRAY).size(9.0));
+                }
+            });
+        }
 
         ui.separator();
         ui.heading(egui::RichText::new("Report Formats:").color(ORANGE).strong());

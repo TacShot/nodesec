@@ -45,6 +45,7 @@ impl AuditEngine {
         collect_logs: bool,
         log_hours: i64,
         scan_ad: bool,
+        scan_devices: bool,
     ) -> Result<AuditReport> {
         let platform = target_platform.unwrap_or_else(detect_platform);
         let os_info = detect_os_info(Some(&self.runner))?;
@@ -134,6 +135,20 @@ impl AuditEngine {
             vec![]
         };
 
+        // Scan connected USB/Bluetooth devices
+        let device_findings = if scan_devices {
+            use crate::network::common::NetworkMonitor;
+            let mut monitor: Box<dyn NetworkMonitor> = match platform {
+                Platform::Linux => Box::new(crate::network::linux::LinuxNetworkMonitor::new()),
+                Platform::MacOS => Box::new(crate::network::macos::MacOSNetworkMonitor::new()),
+                Platform::Windows => Box::new(crate::network::windows::WindowsNetworkMonitor::new()),
+                Platform::Unknown => Box::new(crate::network::linux::LinuxNetworkMonitor::new()),
+            };
+            monitor.enumerate_all_devices()
+        } else {
+            vec![]
+        };
+
         // Network monitoring - collect connections with threat analysis
         let network_connections = {
             let mut monitor: Box<dyn NetworkMonitor> = match platform {
@@ -190,6 +205,7 @@ impl AuditEngine {
             system_logs,
             ad_findings,
             network_connections,
+            device_findings,
             remediation_path: remediation_path.clone(),
         };
 

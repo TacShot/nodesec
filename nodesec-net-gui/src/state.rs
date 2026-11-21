@@ -303,12 +303,18 @@ pub struct AuditState {
     pub compliance_cis: bool,
     pub compliance_nist: bool,
     pub compliance_pci_dss: bool,
+    pub compliance_iso_27001: bool,
+    pub compliance_iso_27005: bool,
+    pub scan_applications: bool,
+    pub scan_ad_security: bool,
+    pub scan_devices: bool,
     pub enable_nvd: bool,
     pub last_scan_time: Option<String>,
     pub findings_count: usize,
     pub suspicious_count: usize,
     pub critical_count: usize,
     pub audit_results: String,
+    pub selected_report: Option<String>,
 }
 
 pub struct MonitorState {

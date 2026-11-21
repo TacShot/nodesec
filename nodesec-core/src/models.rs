@@ -269,6 +269,7 @@ pub struct AuditReport {
     pub system_logs: Vec<LogEntry>,
     pub ad_findings: Vec<AdFinding>,
     pub network_connections: Vec<NetworkConnection>,
+    pub device_findings: Vec<crate::models::ConnectedDevice>,
     pub remediation_path: Option<String>,
 }
 
