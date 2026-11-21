@@ -983,7 +983,9 @@ impl App {
 
         ui.separator();
         if ui.button("Refresh Device List").clicked() {
-            // TODO: trigger device re-enumeration
+            let devices = enumerate_all_devices_platform();
+            let mut devices_lock = self.monitor_state.connected_devices.lock().unwrap();
+            *devices_lock = devices;
         }
     }
     fn render_alerts(&mut self, ui: &mut egui::Ui) {
