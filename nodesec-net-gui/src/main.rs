@@ -1999,21 +1999,52 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
     {
         let mut devices = Vec::new();
 
-        // USB devices using system_profiler with recursive hub traversal
-        if let Ok(output) = std::process::Command::new("system_profiler").args(["SPUSBDataType", "-json"]).output() {
+        // USB devices via ioreg (primary method - works on all macOS versions)
+        // system_profiler SPUSBDataType -json returns empty [] on some macOS versions
+        if let Ok(output) = std::process::Command::new("ioreg")
+            .args(["-p", "IOUSB", "-w0"])
+            .output()
+        {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                if let Some(items) = json.get("SPUSBDataType").and_then(|v| v.as_array()) {
-                    for item in items {
-                        extract_usb_from_json_recursive(&item, &mut devices);
+            for line in stdout.lines() {
+                // ioreg -p IOUSB -w0 format: "+-o DeviceName@address  <class ...>"
+                // or "| +-o DeviceName@address  <class ...>" for children
+                if let Some(start) = line.find("+-o ") {
+                    let after_o = &line[start + 4..];
+                    // Device name is before @address
+                    if let Some(at_pos) = after_o.find('@') {
+                        let name = after_o[..at_pos].trim();
+                        if !name.is_empty() && name != "Root" {
+                            devices.push(nodesec_core::models::ConnectedDevice {
+                                id: format!("ioreg:{}", name),
+                                name: name.to_string(),
+                                device_type: nodesec_core::models::DeviceType::Usb,
+                                vendor: None,
+                                product_id: None,
+                                vendor_id: None,
+                                serial_number: None,
+                                connected_at: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                                last_seen: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                                is_connected: true,
+                            });
+                        }
                     }
                 }
             }
         }
 
-        // Fallback: system_profiler without -json (text output, works when -json returns empty)
+        // Fallback: system_profiler SPUSBDataType (text output)
         if devices.is_empty() {
-            if let Ok(output) = std::process::Command::new("system_profiler").args(["SPUSBDataType"]).output() {
+            if let Ok(output) = std::process::Command::new("system_profiler")
+                .args(["SPUSBDataType"])
+                .output()
+            {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let mut current_name: Option<String> = None;
                 let mut current_vendor_id: Option<String> = None;
@@ -2025,7 +2056,26 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                     // Device name line: starts at column 0 (no leading spaces) and ends with :
                     if !line.starts_with(' ') && trimmed.ends_with(':') && trimmed.len() > 1 {
                         // Save previous device
-                        save_usb_device(&current_name, &current_vendor_id, &current_product_id, &current_serial, &mut devices);
+                        if let (Some(name), _) = (&current_name, &current_vendor_id) {
+                            devices.push(nodesec_core::models::ConnectedDevice {
+                                id: format!("sp:{}", name),
+                                name: name.clone(),
+                                device_type: nodesec_core::models::DeviceType::Usb,
+                                vendor: None,
+                                product_id: current_product_id.clone(),
+                                vendor_id: current_vendor_id.clone(),
+                                serial_number: current_serial.clone(),
+                                connected_at: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                                last_seen: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                                is_connected: true,
+                            });
+                        }
                         current_name = Some(trimmed.trim_end_matches(':').trim().to_string());
                         current_vendor_id = None;
                         current_product_id = None;
@@ -2039,66 +2089,25 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
                     }
                 }
                 // Save last device
-                save_usb_device(&current_name, &current_vendor_id, &current_product_id, &current_serial, &mut devices);
-            }
-        }
-
-        // Fallback to ioreg if system_profiler returns empty
-        // ioreg outputs XML plist format; convert to JSON with plutil for parsing
-        if devices.is_empty() {
-            if let Ok(ioreg_output) = std::process::Command::new("ioreg")
-                .args(["-r", "-c", "IOUSBDevice", "-a"])
-                .output()
-            {
-                let temp_path = std::env::temp_dir().join("nodesec_ioreg.plist");
-                if std::fs::write(&temp_path, &ioreg_output.stdout).is_ok() {
-                    if let Ok(plutil_output) = std::process::Command::new("plutil")
-                        .args(["-convert", "json", "-o", "-", temp_path.to_str().unwrap_or("")])
-                        .output()
-                    {
-                        if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&plutil_output.stdout) {
-                            if let Some(items) = json.as_array() {
-                                for item in items {
-                                    let name = item.get("_name")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("Unknown USB Device")
-                                        .to_string();
-                                    let product_id = item.get("product_id")
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| s.to_string());
-                                    let vendor_id = item.get("vendor_id")
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| s.to_string());
-                                    let serial = item.get("serial_num")
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| s.to_string());
-
-                                    // ioreg may use different key names; try alternatives
-                                    let product_id = product_id.or_else(|| {
-                                        item.get("IDProduct").and_then(|v| v.as_str()).map(|s| s.to_string())
-                                    });
-                                    let vendor_id = vendor_id.or_else(|| {
-                                        item.get("IDVendor").and_then(|v| v.as_str()).map(|s| s.to_string())
-                                    });
-
-                                    devices.push(nodesec_core::models::ConnectedDevice {
-                                        id: format!("usb:{}:{}", vendor_id.as_deref().unwrap_or("unknown"), product_id.as_deref().unwrap_or("unknown")),
-                                        name,
-                                        device_type: nodesec_core::models::DeviceType::Usb,
-                                        vendor: None,
-                                        product_id,
-                                        vendor_id,
-                                        serial_number: serial,
-                                        connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
-                                        last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
-                                        is_connected: true,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                    // Clean up temp file
-                    let _ = std::fs::remove_file(&temp_path);
+                if let (Some(name), _) = (&current_name, &current_vendor_id) {
+                    devices.push(nodesec_core::models::ConnectedDevice {
+                        id: format!("sp:{}", name),
+                        name: name.clone(),
+                        device_type: nodesec_core::models::DeviceType::Usb,
+                        vendor: None,
+                        product_id: current_product_id.clone(),
+                        vendor_id: current_vendor_id.clone(),
+                        serial_number: current_serial.clone(),
+                        connected_at: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        last_seen: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                        is_connected: true,
+                    });
                 }
             }
         }
@@ -2290,77 +2299,8 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        Vec::new()
-    }
-}/// Recursively extract USB devices from JSON items (handles USB hubs with _items)
-fn extract_usb_from_json_recursive(item: &serde_json::Value, devices: &mut Vec<nodesec_core::models::ConnectedDevice>) {
-    let name = item.get("_name").and_then(|v| v.as_str()).unwrap_or("Unknown USB Device").to_string();
-    let vendor = item.get("_vendor").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let product_id = item.get("product_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let vendor_id = item.get("vendor_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let serial = item.get("serial_num").and_then(|v| v.as_str()).map(|s| s.to_string());
-    
-    let is_hub = name.to_lowercase().contains("hub") || vendor_id.is_none();
-    
-    if !is_hub || vendor_id.is_some() {
-        devices.push(nodesec_core::models::ConnectedDevice {
-            id: format!("usb:{}:{}", vendor_id.as_deref().unwrap_or("unknown"), product_id.as_deref().unwrap_or("unknown")),
-            name,
-            device_type: nodesec_core::models::DeviceType::Usb,
-            vendor,
-            product_id,
-            vendor_id,
-            serial_number: serial,
-            connected_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
-            last_seen: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
-            is_connected: true,
-        });
-    }
-    
-    // Recurse into _items (devices connected through hubs)
-    if let Some(sub_items) = item.get("_items").and_then(|v| v.as_array()) {
-        for sub in sub_items {
-            extract_usb_from_json_recursive(sub, devices);
-        }
-    }
-}
-
-/// Save a USB device from text-parsed system_profiler output
-fn save_usb_device(
-    name: &Option<String>,
-    vendor_id: &Option<String>,
-    product_id: &Option<String>,
-    serial: &Option<String>,
-    devices: &mut Vec<nodesec_core::models::ConnectedDevice>,
-) {
-    if let (Some(name), Some(vid), Some(pid)) = (name, vendor_id, product_id) {
-        // Skip hubs and controllers
-        if name.to_lowercase().contains("hub")
-            || name.to_lowercase().contains("host controller")
-            || name.to_lowercase().contains("xhci")
-            || name.to_lowercase().contains("ehci")
         {
-            return;
+            Vec::new()
         }
-        devices.push(nodesec_core::models::ConnectedDevice {
-            id: format!("usb:{}:{}", vid, pid),
-            name: name.clone(),
-            device_type: nodesec_core::models::DeviceType::Usb,
-            vendor: None,
-            product_id: Some(pid.clone()),
-            vendor_id: Some(vid.clone()),
-            serial_number: serial.clone(),
-            connected_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            last_seen: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            is_connected: true,
-        });
     }
-}
 
