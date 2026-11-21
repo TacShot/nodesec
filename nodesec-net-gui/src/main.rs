@@ -1189,9 +1189,9 @@ impl App {
 
         // Copy all needed values from audit_state (release lock before egui closures)
         let (is_scanning, scan_complete, compliance_cis, compliance_nist, compliance_pci_dss,
-             compliance_iso_27001, compliance_iso_27005, scan_applications, scan_ad_security,
+             compliance_iso_iec, scan_applications, scan_ad_security,
              scan_devices, enable_nvd, audit_results, findings_count, suspicious_count,
-             critical_count) = {
+             critical_count, pre_scan_details) = {
             let state = self.monitor_state.audit_state.lock().unwrap();
             (
                 state.is_scanning,
@@ -1199,8 +1199,7 @@ impl App {
                 state.compliance_cis,
                 state.compliance_nist,
                 state.compliance_pci_dss,
-                state.compliance_iso_27001,
-                state.compliance_iso_27005,
+                state.compliance_iso_iec,
                 state.scan_applications,
                 state.scan_ad_security,
                 state.scan_devices,
@@ -1209,6 +1208,7 @@ impl App {
                 state.findings_count,
                 state.suspicious_count,
                 state.critical_count,
+                state.pre_scan_details.clone(),
             )
         };
 
@@ -1248,26 +1248,92 @@ impl App {
             ui.add_space(8.0);
 
             if ui.button(scan_btn_text).clicked() && !is_scanning {
-                // Re-lock to mutate
-                let mut state = self.monitor_state.audit_state.lock().unwrap();
-                state.is_scanning = true;
-                state.scan_complete = false;
-                state.audit_results = "Scan in progress...".to_string();
-                state.findings_count = 0;
-                state.suspicious_count = 0;
-                state.critical_count = 0;
+                // Build pre-scan details before starting
+                let mut details = String::new();
+                details.push_str("=== Pre-Scan Configuration ===\n\n");
+
+                details.push_str("Scan Options:\n");
+                if scan_applications {
+                    details.push_str("  • Scan Applications: Enabled (inventory installed apps + CVEs)\n");
+                } else {
+                    details.push_str("  • Scan Applications: Disabled\n");
+                }
+                if scan_ad_security {
+                    details.push_str("  • Scan AD Security: Enabled (Active Directory security check)\n");
+                } else {
+                    details.push_str("  • Scan AD Security: Disabled\n");
+                }
+                if scan_devices {
+                    details.push_str("  • Scan USB/Bluetooth Devices: Enabled (device enumeration via ioreg/system_profiler/lsusb/Get-PnpDevice)\n");
+                } else {
+                    details.push_str("  • Scan USB/Bluetooth Devices: Disabled\n");
+                }
+
+                details.push_str("\nCompliance Standards:\n");
+                if compliance_cis {
+                    details.push_str("  • CIS: Enabled (Center for Internet Security benchmarks)\n");
+                } else {
+                    details.push_str("  • CIS: Disabled\n");
+                }
+                if compliance_nist {
+                    details.push_str("  • NIST: Enabled (NIST Cybersecurity Framework)\n");
+                } else {
+                    details.push_str("  • NIST: Disabled\n");
+                }
+                if compliance_pci_dss {
+                    details.push_str("  • PCI-DSS: Enabled (Payment Card Industry Data Security Standard)\n");
+                } else {
+                    details.push_str("  • PCI-DSS: Disabled\n");
+                }
+                if compliance_iso_iec {
+                    details.push_str("  • ISO/IEC 27001-27005: Enabled\n");
+                    details.push_str("    - ISO 27001: Information Security Management System requirements\n");
+                    details.push_str("    - ISO 27002: Code of practice for information security controls\n");
+                    details.push_str("    - ISO 27003: Guidelines for ISMS implementation\n");
+                    details.push_str("    - ISO 27004: Guidelines for security monitoring and measurement\n");
+                    details.push_str("    - ISO 27005: Guidelines for information security risk management\n");
+                } else {
+                    details.push_str("  • ISO/IEC 27001-27005: Disabled\n");
+                }
+                if enable_nvd {
+                    details.push_str("  • NVD CVE Enrichment: Enabled (NIST NVD vulnerability lookups)\n");
+                } else {
+                    details.push_str("  • NVD CVE Enrichment: Disabled\n");
+                }
+
+                details.push_str("\nChecks to be performed:\n");
+                details.push_str("  1. Firewall status verification\n");
+                details.push_str("  2. SSH configuration audit (root login, password auth)\n");
+                details.push_str("  3. Automatic security updates check\n");
+                details.push_str("  4. File permissions and ownership audit\n");
+                details.push_str("  5. Running process inventory\n");
+                details.push_str("  6. Installed application inventory\n");
+                details.push_str("  7. System log collection\n");
+                details.push_str("  8. Network connection analysis\n");
+                details.push_str("  9. Connected device enumeration\n");
+                details.push_str("  10. Active Directory security scan\n");
+
+                // Store pre-scan details
+                {
+                    let mut state = self.monitor_state.audit_state.lock().unwrap();
+                    state.pre_scan_details = details;
+                    state.is_scanning = true;
+                    state.scan_complete = false;
+                    state.audit_results = "Scan in progress...".to_string();
+                    state.findings_count = 0;
+                    state.suspicious_count = 0;
+                    state.critical_count = 0;
+                }
 
                 // Capture settings before releasing lock
-                let compliance_cis = state.compliance_cis;
-                let compliance_nist = state.compliance_nist;
-                let compliance_pci_dss = state.compliance_pci_dss;
-                let compliance_iso_27001 = state.compliance_iso_27001;
-                let compliance_iso_27005 = state.compliance_iso_27005;
-                let scan_apps = state.scan_applications;
-                let scan_ad = state.scan_ad_security;
-                let scan_dev = state.scan_devices;
-                let enable_nvd = state.enable_nvd;
-                drop(state);
+                let compliance_cis_val = compliance_cis;
+                let compliance_nist_val = compliance_nist;
+                let compliance_pci_dss_val = compliance_pci_dss;
+                let compliance_iso_iec_val = compliance_iso_iec;
+                let scan_apps = scan_applications;
+                let scan_ad = scan_ad_security;
+                let scan_dev = scan_devices;
+                let enable_nvd_val = enable_nvd;
 
                 // Trigger actual audit scan using the audit engine
                 let monitor_state_clone = self.monitor_state.clone();
@@ -1277,11 +1343,16 @@ impl App {
 
                     // Build standards filter
                     let mut standards: Vec<String> = Vec::new();
-                    if compliance_cis { standards.push("CIS".to_string()); }
-                    if compliance_nist { standards.push("NIST".to_string()); }
-                    if compliance_pci_dss { standards.push("PCI-DSS".to_string()); }
-                    if compliance_iso_27001 { standards.push("ISO-27001".to_string()); }
-                    if compliance_iso_27005 { standards.push("ISO-27005".to_string()); }
+                    if compliance_cis_val { standards.push("CIS".to_string()); }
+                    if compliance_nist_val { standards.push("NIST".to_string()); }
+                    if compliance_pci_dss_val { standards.push("PCI-DSS".to_string()); }
+                    if compliance_iso_iec_val {
+                        standards.push("ISO27001".to_string());
+                        standards.push("ISO27002".to_string());
+                        standards.push("ISO27003".to_string());
+                        standards.push("ISO27004".to_string());
+                        standards.push("ISO27005".to_string());
+                    }
                     let standards_filter = if standards.is_empty() { None } else { Some(standards) };
 
                     match AuditEngine::new(standards_filter, None) {
@@ -1290,7 +1361,7 @@ impl App {
                             let _ = std::fs::create_dir_all(output_dir);
                             match engine.run_audit(
                                 None,                              // target_platform (auto-detect)
-                                enable_nvd,                        // include_cves
+                                enable_nvd_val,                    // include_cves
                                 50,                                // cve_limit
                                 true,                              // generate_remediation
                                 scan_apps,                         // scan_apps
@@ -1341,6 +1412,19 @@ impl App {
             }
         });
 
+        // Pre-scan details pane (shows what will be checked before running)
+        if !is_scanning && !scan_complete {
+            ui.separator();
+            ui.group(|ui| {
+                ui.heading(egui::RichText::new("Pre-Scan Details").color(ORANGE).strong());
+                ui.label(egui::RichText::new("Selected checks and parameters:").color(GRAY).size(10.0));
+                ui.add_space(4.0);
+                egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                    ui.label(egui::RichText::new(&pre_scan_details).color(WHITE).size(10.0));
+                });
+            });
+        }
+
         ui.separator();
         ui.label(egui::RichText::new("Compliance Standards:").color(ORANGE).strong());
         ui.horizontal(|ui| {
@@ -1362,16 +1446,10 @@ impl App {
                 state.compliance_pci_dss = pci_checked;
             }
             ui.add_space(8.0);
-            let mut iso27001_checked = compliance_iso_27001;
-            if ui.checkbox(&mut iso27001_checked, "ISO-27001").changed() {
+            let mut iso_iec_checked = compliance_iso_iec;
+            if ui.checkbox(&mut iso_iec_checked, "ISO/IEC (27001-27005)").changed() {
                 let mut state = self.monitor_state.audit_state.lock().unwrap();
-                state.compliance_iso_27001 = iso27001_checked;
-            }
-            ui.add_space(8.0);
-            let mut iso27005_checked = compliance_iso_27005;
-            if ui.checkbox(&mut iso27005_checked, "ISO-27005").changed() {
-                let mut state = self.monitor_state.audit_state.lock().unwrap();
-                state.compliance_iso_27005 = iso27005_checked;
+                state.compliance_iso_iec = iso_iec_checked;
             }
         });
 

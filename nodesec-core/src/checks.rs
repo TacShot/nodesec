@@ -29,7 +29,7 @@ fn linux_rules() -> Vec<AuditRule> {
             cve_queries: vec![
                 CveQuery { keyword: "Linux firewall bypass vulnerability".to_string(), product_hint: None },
             ],
-            standards: vec!["ISO27001".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
+            standards: vec!["ISO27001".to_string(), "ISO27002".to_string(), "ISO27003".to_string(), "ISO27004".to_string(), "ISO27005".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
         },
         AuditRule {
             id: "linux_sshd_root_login_disabled".to_string(),
@@ -46,7 +46,7 @@ fn linux_rules() -> Vec<AuditRule> {
             cve_queries: vec![
                 CveQuery { keyword: "OpenSSH root login privilege escalation".to_string(), product_hint: None },
             ],
-            standards: vec!["ISO27001".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
+            standards: vec!["ISO27001".to_string(), "ISO27002".to_string(), "ISO27003".to_string(), "ISO27004".to_string(), "ISO27005".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
         },
         AuditRule {
             id: "linux_sshd_password_auth_disabled".to_string(),
@@ -63,7 +63,7 @@ fn linux_rules() -> Vec<AuditRule> {
             cve_queries: vec![
                 CveQuery { keyword: "OpenSSH password authentication brute force".to_string(), product_hint: None },
             ],
-            standards: vec!["ISO27001".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
+            standards: vec!["ISO27001".to_string(), "ISO27002".to_string(), "ISO27003".to_string(), "ISO27004".to_string(), "ISO27005".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
         },
         AuditRule {
             id: "linux_auto_updates_enabled".to_string(),
@@ -82,7 +82,7 @@ fn linux_rules() -> Vec<AuditRule> {
             cve_queries: vec![
                 CveQuery { keyword: "Linux unpatched vulnerability exploitation".to_string(), product_hint: None },
             ],
-            standards: vec!["ISO27001".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
+            standards: vec!["ISO27001".to_string(), "ISO27002".to_string(), "ISO27003".to_string(), "ISO27004".to_string(), "ISO27005".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
         },
     ]
 }
@@ -103,7 +103,7 @@ fn macos_rules() -> Vec<AuditRule> {
             cve_queries: vec![
                 CveQuery { keyword: "macOS firewall bypass network attack".to_string(), product_hint: None },
             ],
-            standards: vec!["ISO27001".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
+            standards: vec!["ISO27001".to_string(), "ISO27002".to_string(), "ISO27003".to_string(), "ISO27004".to_string(), "ISO27005".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
         },
         AuditRule {
             id: "macos_filevault_enabled".to_string(),
@@ -119,7 +119,7 @@ fn macos_rules() -> Vec<AuditRule> {
             cve_queries: vec![
                 CveQuery { keyword: "macOS FileVault encryption bypass".to_string(), product_hint: None },
             ],
-            standards: vec!["ISO27001".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
+            standards: vec!["ISO27001".to_string(), "ISO27002".to_string(), "ISO27003".to_string(), "ISO27004".to_string(), "ISO27005".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
         },
         AuditRule {
             id: "macos_remote_login_disabled".to_string(),
@@ -135,7 +135,7 @@ fn macos_rules() -> Vec<AuditRule> {
             cve_queries: vec![
                 CveQuery { keyword: "macOS SSH remote code execution".to_string(), product_hint: None },
             ],
-            standards: vec!["ISO27001".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
+            standards: vec!["ISO27001".to_string(), "ISO27002".to_string(), "ISO27003".to_string(), "ISO27004".to_string(), "ISO27005".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
         },
         AuditRule {
             id: "macos_auto_updates_enabled".to_string(),
@@ -152,7 +152,7 @@ fn macos_rules() -> Vec<AuditRule> {
             cve_queries: vec![
                 CveQuery { keyword: "macOS unpatched vulnerability exploitation".to_string(), product_hint: None },
             ],
-            standards: vec!["ISO27001".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
+            standards: vec!["ISO27001".to_string(), "ISO27002".to_string(), "ISO27003".to_string(), "ISO27004".to_string(), "ISO27005".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
         },
     ]
 }
@@ -173,7 +173,7 @@ fn windows_rules() -> Vec<AuditRule> {
             cve_queries: vec![
                 CveQuery { keyword: "Windows Firewall bypass network intrusion".to_string(), product_hint: None },
             ],
-            standards: vec!["ISO27001".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
+            standards: vec!["ISO27001".to_string(), "ISO27002".to_string(), "ISO27003".to_string(), "ISO27004".to_string(), "ISO27005".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
         },
         AuditRule {
             id: "windows_bitlocker_enabled".to_string(),
@@ -189,7 +189,7 @@ fn windows_rules() -> Vec<AuditRule> {
             cve_queries: vec![
                 CveQuery { keyword: "Windows BitLocker encryption bypass".to_string(), product_hint: None },
             ],
-            standards: vec!["ISO27001".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
+            standards: vec!["ISO27001".to_string(), "ISO27002".to_string(), "ISO27003".to_string(), "ISO27004".to_string(), "ISO27005".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
         },
         AuditRule {
             id: "windows_rdp_disabled".to_string(),
@@ -205,7 +205,7 @@ fn windows_rules() -> Vec<AuditRule> {
             cve_queries: vec![
                 CveQuery { keyword: "Windows Remote Desktop RDP remote code execution".to_string(), product_hint: None },
             ],
-            standards: vec!["ISO27001".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
+            standards: vec!["ISO27001".to_string(), "ISO27002".to_string(), "ISO27003".to_string(), "ISO27004".to_string(), "ISO27005".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
         },
         AuditRule {
             id: "windows_defender_realtime_enabled".to_string(),
@@ -221,7 +221,7 @@ fn windows_rules() -> Vec<AuditRule> {
             cve_queries: vec![
                 CveQuery { keyword: "Microsoft Defender bypass vulnerability malware".to_string(), product_hint: None },
             ],
-            standards: vec!["ISO27001".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
+            standards: vec!["ISO27001".to_string(), "ISO27002".to_string(), "ISO27003".to_string(), "ISO27004".to_string(), "ISO27005".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
         },
         AuditRule {
             id: "windows_driver_signing".to_string(),
@@ -239,7 +239,7 @@ fn windows_rules() -> Vec<AuditRule> {
             cve_queries: vec![
                 CveQuery { keyword: "Windows unsigned driver privilege escalation kernel exploit".to_string(), product_hint: None },
             ],
-            standards: vec!["ISO27001".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
+            standards: vec!["ISO27001".to_string(), "ISO27002".to_string(), "ISO27003".to_string(), "ISO27004".to_string(), "ISO27005".to_string(), "HIPAA".to_string(), "PCI_DSS".to_string()],
         },
     ]
 }
