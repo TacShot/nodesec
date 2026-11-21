@@ -258,15 +258,20 @@ pub fn export_report_bundle(
     output_dir: &Path,
     save_to_desktop: bool,
 ) -> Result<ExportPaths> {
-    std::fs::create_dir_all(output_dir)?;
-
-    let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
+    // Format: nodesec-{platform}-{YYYY-MM-DD}-{HH-MM-SS-AM/PM}/
+    let now = Utc::now();
+    let date_str = now.format("%Y-%m-%d").to_string();
+    let time_str = now.format("%I-%M-%S-%p").to_string();
     let platform_str = platform_to_str(&report.target_platform);
-    let base_name = format!("nodesec_{}_{}", platform_str, timestamp);
+    let dir_name = format!("nodesec-{}-{}-{}", platform_str, date_str, time_str);
 
-    let text_path = output_dir.join(format!("{}.txt", base_name));
-    let json_path = output_dir.join(format!("{}.json", base_name));
-    let csv_path = output_dir.join(format!("{}.csv", base_name));
+    // Create report subdirectory
+    let report_dir = output_dir.join(&dir_name);
+    std::fs::create_dir_all(&report_dir)?;
+
+    let text_path = report_dir.join("report.txt");
+    let json_path = report_dir.join("report.json");
+    let csv_path = report_dir.join("report.csv");
 
     std::fs::write(&text_path, render_text_report(report))?;
     std::fs::write(&json_path, render_json_report(report)?)?;
@@ -277,6 +282,7 @@ pub fn export_report_bundle(
         json_report: json_path.clone(),
         csv_report: csv_path.clone(),
         desktop_paths: None,
+        report_dir: Some(report_dir.clone()),
     };
 
     if save_to_desktop {
@@ -284,9 +290,12 @@ pub fn export_report_bundle(
             let desktop_dir = desktop.join("nodesec Reports");
             std::fs::create_dir_all(&desktop_dir)?;
 
-            let desktop_text = desktop_dir.join(format!("{}.txt", base_name));
-            let desktop_json = desktop_dir.join(format!("{}.json", base_name));
-            let desktop_csv = desktop_dir.join(format!("{}.csv", base_name));
+            let desktop_report_dir = desktop_dir.join(&dir_name);
+            std::fs::create_dir_all(&desktop_report_dir)?;
+
+            let desktop_text = desktop_report_dir.join("report.txt");
+            let desktop_json = desktop_report_dir.join("report.json");
+            let desktop_csv = desktop_report_dir.join("report.csv");
 
             std::fs::copy(&text_path, &desktop_text)?;
             std::fs::copy(&json_path, &desktop_json)?;
@@ -296,6 +305,7 @@ pub fn export_report_bundle(
                 text_report: desktop_text,
                 json_report: desktop_json,
                 csv_report: desktop_csv,
+                report_dir: Some(desktop_report_dir),
             });
         }
     }
@@ -309,6 +319,7 @@ pub struct ExportPaths {
     pub json_report: std::path::PathBuf,
     pub csv_report: std::path::PathBuf,
     pub desktop_paths: Option<DesktopPaths>,
+    pub report_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -316,6 +327,7 @@ pub struct DesktopPaths {
     pub text_report: std::path::PathBuf,
     pub json_report: std::path::PathBuf,
     pub csv_report: std::path::PathBuf,
+    pub report_dir: Option<std::path::PathBuf>,
 }
 
 fn platform_to_str(platform: &Platform) -> &'static str {

@@ -1191,7 +1191,7 @@ impl App {
         let (is_scanning, scan_complete, compliance_cis, compliance_nist, compliance_pci_dss,
              compliance_iso_iec, scan_applications, scan_ad_security,
              scan_devices, enable_nvd, audit_results, findings_count, suspicious_count,
-             critical_count, pre_scan_details) = {
+             critical_count, last_scan_time) = {
             let state = self.monitor_state.audit_state.lock().unwrap();
             (
                 state.is_scanning,
@@ -1208,7 +1208,7 @@ impl App {
                 state.findings_count,
                 state.suspicious_count,
                 state.critical_count,
-                state.pre_scan_details.clone(),
+                state.last_scan_time.clone(),
             )
         };
 
@@ -1248,82 +1248,14 @@ impl App {
             ui.add_space(8.0);
 
             if ui.button(scan_btn_text).clicked() && !is_scanning {
-                // Build pre-scan details before starting
-                let mut details = String::new();
-                details.push_str("=== Pre-Scan Configuration ===\n\n");
-
-                details.push_str("Scan Options:\n");
-                if scan_applications {
-                    details.push_str("  • Scan Applications: Enabled (inventory installed apps + CVEs)\n");
-                } else {
-                    details.push_str("  • Scan Applications: Disabled\n");
-                }
-                if scan_ad_security {
-                    details.push_str("  • Scan AD Security: Enabled (Active Directory security check)\n");
-                } else {
-                    details.push_str("  • Scan AD Security: Disabled\n");
-                }
-                if scan_devices {
-                    details.push_str("  • Scan USB/Bluetooth Devices: Enabled (device enumeration via ioreg/system_profiler/lsusb/Get-PnpDevice)\n");
-                } else {
-                    details.push_str("  • Scan USB/Bluetooth Devices: Disabled\n");
-                }
-
-                details.push_str("\nCompliance Standards:\n");
-                if compliance_cis {
-                    details.push_str("  • CIS: Enabled (Center for Internet Security benchmarks)\n");
-                } else {
-                    details.push_str("  • CIS: Disabled\n");
-                }
-                if compliance_nist {
-                    details.push_str("  • NIST: Enabled (NIST Cybersecurity Framework)\n");
-                } else {
-                    details.push_str("  • NIST: Disabled\n");
-                }
-                if compliance_pci_dss {
-                    details.push_str("  • PCI-DSS: Enabled (Payment Card Industry Data Security Standard)\n");
-                } else {
-                    details.push_str("  • PCI-DSS: Disabled\n");
-                }
-                if compliance_iso_iec {
-                    details.push_str("  • ISO/IEC 27001-27005: Enabled\n");
-                    details.push_str("    - ISO 27001: Information Security Management System requirements\n");
-                    details.push_str("    - ISO 27002: Code of practice for information security controls\n");
-                    details.push_str("    - ISO 27003: Guidelines for ISMS implementation\n");
-                    details.push_str("    - ISO 27004: Guidelines for security monitoring and measurement\n");
-                    details.push_str("    - ISO 27005: Guidelines for information security risk management\n");
-                } else {
-                    details.push_str("  • ISO/IEC 27001-27005: Disabled\n");
-                }
-                if enable_nvd {
-                    details.push_str("  • NVD CVE Enrichment: Enabled (NIST NVD vulnerability lookups)\n");
-                } else {
-                    details.push_str("  • NVD CVE Enrichment: Disabled\n");
-                }
-
-                details.push_str("\nChecks to be performed:\n");
-                details.push_str("  1. Firewall status verification\n");
-                details.push_str("  2. SSH configuration audit (root login, password auth)\n");
-                details.push_str("  3. Automatic security updates check\n");
-                details.push_str("  4. File permissions and ownership audit\n");
-                details.push_str("  5. Running process inventory\n");
-                details.push_str("  6. Installed application inventory\n");
-                details.push_str("  7. System log collection\n");
-                details.push_str("  8. Network connection analysis\n");
-                details.push_str("  9. Connected device enumeration\n");
-                details.push_str("  10. Active Directory security scan\n");
-
-                // Store pre-scan details
-                {
-                    let mut state = self.monitor_state.audit_state.lock().unwrap();
-                    state.pre_scan_details = details;
-                    state.is_scanning = true;
-                    state.scan_complete = false;
-                    state.audit_results = "Scan in progress...".to_string();
-                    state.findings_count = 0;
-                    state.suspicious_count = 0;
-                    state.critical_count = 0;
-                }
+                // Re-lock to mutate
+                let mut state = self.monitor_state.audit_state.lock().unwrap();
+                state.is_scanning = true;
+                state.scan_complete = false;
+                state.audit_results = "Scan in progress...".to_string();
+                state.findings_count = 0;
+                state.suspicious_count = 0;
+                state.critical_count = 0;
 
                 // Capture settings before releasing lock
                 let compliance_cis_val = compliance_cis;
@@ -1411,19 +1343,6 @@ impl App {
                 });
             }
         });
-
-        // Pre-scan details pane (shows what will be checked before running)
-        if !is_scanning && !scan_complete {
-            ui.separator();
-            ui.group(|ui| {
-                ui.heading(egui::RichText::new("Pre-Scan Details").color(ORANGE).strong());
-                ui.label(egui::RichText::new("Selected checks and parameters:").color(GRAY).size(10.0));
-                ui.add_space(4.0);
-                egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                    ui.label(egui::RichText::new(&pre_scan_details).color(WHITE).size(10.0));
-                });
-            });
-        }
 
         ui.separator();
         ui.label(egui::RichText::new("Compliance Standards:").color(ORANGE).strong());
@@ -1879,7 +1798,23 @@ impl App {
         ui.heading(egui::RichText::new("Details").color(ORANGE).strong());
         ui.separator();
 
-        match self.details_selected_tab {
+        // Read audit state for details pane
+        let audit_state = self.monitor_state.audit_state.lock().unwrap();
+        let compliance_cis = audit_state.compliance_cis;
+        let compliance_nist = audit_state.compliance_nist;
+        let compliance_pci_dss = audit_state.compliance_pci_dss;
+        let compliance_iso_iec = audit_state.compliance_iso_iec;
+        let scan_applications = audit_state.scan_applications;
+        let scan_ad_security = audit_state.scan_ad_security;
+        let scan_devices = audit_state.scan_devices;
+        let enable_nvd = audit_state.enable_nvd;
+        let last_scan_time = audit_state.last_scan_time.clone();
+        let scan_complete = audit_state.scan_complete;
+        let audit_results = audit_state.audit_results.clone();
+        let selected_tab = self.selected_tab;
+        drop(audit_state);
+
+        match selected_tab {
             Tab::Connections => {
                 if let Some(ref conn) = self.details_selected_conn {
                     let item = crate::state::ConnectionItem {
@@ -1928,6 +1863,47 @@ impl App {
             }
             Tab::Dashboard => {
                 self.render_dashboard_summary(ui);
+            }
+            Tab::Audit => {
+                // Show audit configuration and pre-scan details in details pane
+                ui.label(egui::RichText::new("Audit Configuration").color(ORANGE).strong());
+                ui.add_space(4.0);
+
+                // Scan options
+                ui.label(egui::RichText::new("Scan Options:").color(WHITE).strong());
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(format!("Applications: {}", if scan_applications { "Enabled" } else { "Disabled" })).color(WHITE).size(10.0));
+                    ui.add_space(12.0);
+                    ui.label(egui::RichText::new(format!("AD Security: {}", if scan_ad_security { "Enabled" } else { "Disabled" })).color(WHITE).size(10.0));
+                    ui.add_space(12.0);
+                    ui.label(egui::RichText::new(format!("USB/Bluetooth: {}", if scan_devices { "Enabled" } else { "Disabled" })).color(WHITE).size(10.0));
+                });
+                ui.add_space(6.0);
+
+                // Compliance standards
+                ui.label(egui::RichText::new("Compliance Standards:").color(WHITE).strong());
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(format!("CIS: {}", if compliance_cis { "Enabled" } else { "Disabled" })).color(WHITE).size(10.0));
+                    ui.add_space(12.0);
+                    ui.label(egui::RichText::new(format!("NIST: {}", if compliance_nist { "Enabled" } else { "Disabled" })).color(WHITE).size(10.0));
+                    ui.add_space(12.0);
+                    ui.label(egui::RichText::new(format!("PCI-DSS: {}", if compliance_pci_dss { "Enabled" } else { "Disabled" })).color(WHITE).size(10.0));
+                    ui.add_space(12.0);
+                    ui.label(egui::RichText::new(format!("ISO/IEC 27001-27005: {}", if compliance_iso_iec { "Enabled" } else { "Disabled" })).color(WHITE).size(10.0));
+                });
+                ui.add_space(6.0);
+
+                // NVD
+                ui.label(egui::RichText::new(format!("NVD CVE Enrichment: {}", if enable_nvd { "Enabled" } else { "Disabled" })).color(WHITE).size(10.0));
+                ui.add_space(8.0);
+
+                // Last scan info
+                if let Some(ref last_time) = last_scan_time {
+                    ui.label(egui::RichText::new(format!("Last Scan: {}", last_time)).color(WHITE).size(10.0));
+                }
+                if scan_complete {
+                    ui.label(egui::RichText::new(format!("Results: {}", audit_results)).color(GREEN).size(10.0));
+                }
             }
             _ => {
                 ui.centered_and_justified(|ui| {

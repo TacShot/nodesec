@@ -314,7 +314,6 @@ pub struct AuditState {
     pub critical_count: usize,
     pub audit_results: String,
     pub selected_report: Option<String>,
-    pub pre_scan_details: String,
 }
 
 pub struct MonitorState {
