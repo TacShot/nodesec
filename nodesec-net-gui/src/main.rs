@@ -2011,6 +2011,38 @@ fn enumerate_all_devices_platform() -> Vec<nodesec_core::models::ConnectedDevice
             }
         }
 
+        // Fallback: system_profiler without -json (text output, works when -json returns empty)
+        if devices.is_empty() {
+            if let Ok(output) = std::process::Command::new("system_profiler").args(["SPUSBDataType"]).output() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let mut current_name: Option<String> = None;
+                let mut current_vendor_id: Option<String> = None;
+                let mut current_product_id: Option<String> = None;
+                let mut current_serial: Option<String> = None;
+
+                for line in stdout.lines() {
+                    let trimmed = line.trim();
+                    // Device name line: starts at column 0 (no leading spaces) and ends with :
+                    if !line.starts_with(' ') && trimmed.ends_with(':') && trimmed.len() > 1 {
+                        // Save previous device
+                        save_usb_device(&current_name, &current_vendor_id, &current_product_id, &current_serial, &mut devices);
+                        current_name = Some(trimmed.trim_end_matches(':').trim().to_string());
+                        current_vendor_id = None;
+                        current_product_id = None;
+                        current_serial = None;
+                    } else if trimmed.starts_with("Vendor ID:") {
+                        current_vendor_id = Some(trimmed["Vendor ID:".len()..].trim().to_string());
+                    } else if trimmed.starts_with("Product ID:") {
+                        current_product_id = Some(trimmed["Product ID:".len()..].trim().to_string());
+                    } else if trimmed.starts_with("Serial Number:") {
+                        current_serial = Some(trimmed["Serial Number:".len()..].trim().to_string());
+                    }
+                }
+                // Save last device
+                save_usb_device(&current_name, &current_vendor_id, &current_product_id, &current_serial, &mut devices);
+            }
+        }
+
         // Fallback to ioreg if system_profiler returns empty
         // ioreg outputs XML plist format; convert to JSON with plutil for parsing
         if devices.is_empty() {
@@ -2291,6 +2323,44 @@ fn extract_usb_from_json_recursive(item: &serde_json::Value, devices: &mut Vec<n
         for sub in sub_items {
             extract_usb_from_json_recursive(sub, devices);
         }
+    }
+}
+
+/// Save a USB device from text-parsed system_profiler output
+fn save_usb_device(
+    name: &Option<String>,
+    vendor_id: &Option<String>,
+    product_id: &Option<String>,
+    serial: &Option<String>,
+    devices: &mut Vec<nodesec_core::models::ConnectedDevice>,
+) {
+    if let (Some(name), Some(vid), Some(pid)) = (name, vendor_id, product_id) {
+        // Skip hubs and controllers
+        if name.to_lowercase().contains("hub")
+            || name.to_lowercase().contains("host controller")
+            || name.to_lowercase().contains("xhci")
+            || name.to_lowercase().contains("ehci")
+        {
+            return;
+        }
+        devices.push(nodesec_core::models::ConnectedDevice {
+            id: format!("usb:{}:{}", vid, pid),
+            name: name.clone(),
+            device_type: nodesec_core::models::DeviceType::Usb,
+            vendor: None,
+            product_id: Some(pid.clone()),
+            vendor_id: Some(vid.clone()),
+            serial_number: serial.clone(),
+            connected_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            last_seen: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            is_connected: true,
+        });
     }
 }
 
