@@ -1,8 +1,8 @@
 #!/bin/bash
 # nodesec net-installer for Linux/macOS
-# Usage: curl -fsSL https://raw.githubusercontent.com/TacShot/nodesec/main/install.sh | bash
-#        curl -fsSL https://raw.githubusercontent.com/TacShot/nodesec/main/install.sh | bash -s -- --from-source
-#        curl -fsSL https://raw.githubusercontent.com/TacShot/nodesec/main/install.sh | bash -s -- --version 0.1.0
+# Usage: curl -fsSL https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.sh | bash
+#        curl -fsSL https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.sh | bash -s -- --from-source
+#        curl -fsSL https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.sh | bash -s -- --version 0.1.0
 
 set -euo pipefail
 
@@ -38,16 +38,16 @@ Options:
 
 Examples:
     # Install latest version for current user
-    curl -fsSL https://raw.githubusercontent.com/TacShot/nodesec/main/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.sh | bash
 
     # Install specific version from source
-    curl -fsSL https://raw.githubusercontent.com/TacShot/nodesec/main/install.sh | bash -s -- --from-source --version 0.1.0
+    curl -fsSL https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.sh | bash -s -- --from-source --version 0.1.0
 
     # Install system-wide (requires sudo)
-    curl -fsSL https://raw.githubusercontent.com/TacShot/nodesec/main/install.sh | sudo bash -s -- --target system
+    curl -fsSL https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.sh | sudo bash -s -- --target system
 
     # Uninstall
-    curl -fsSL https://raw.githubusercontent.com/TacShot/nodesec/main/install.sh | bash -s -- --uninstall
+    curl -fsSL https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.sh | bash -s -- --uninstall
 EOF
 }
 

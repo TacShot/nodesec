@@ -7,16 +7,16 @@
 
 .EXAMPLE
     # Install latest version
-    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/install.ps1 | iex
+    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.ps1 | iex
 
     # Install specific version from source
-    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/install.ps1 | iex -- --from-source --version 0.1.0
+    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.ps1 | iex -- --from-source --version 0.1.0
 
     # Install system-wide (requires admin)
-    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/install.ps1 | iex -- --target system
+    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.ps1 | iex -- --target system
 
     # Uninstall
-    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/install.ps1 | iex -- --uninstall
+    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.ps1 | iex -- --uninstall
 #>
 
 param(
@@ -63,16 +63,16 @@ Options:
 
 Examples:
     # Install latest version for current user
-    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/install.ps1 | iex
+    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.ps1 | iex
 
     # Install specific version from source
-    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/install.ps1 | iex -- --from-source --version 0.1.0
+    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.ps1 | iex -- --from-source --version 0.1.0
 
     # Install system-wide (requires admin)
-    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/install.ps1 | iex -- --target system
+    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.ps1 | iex -- --target system
 
     # Uninstall
-    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/install.ps1 | iex -- --uninstall
+    iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.ps1 | iex -- --uninstall
 "@
 }
 
