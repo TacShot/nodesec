@@ -2,7 +2,7 @@
 .SYNOPSIS
     nodesec net-installer for Windows
 .DESCRIPTION
-    Cross-platform net-installer for nodesec System & Network Security Platform.
+    Cross-platform net-installer for nodesec System and Network Security Platform.
     Downloads and installs the latest nodesec release with all dependencies.
     Falls back to building from source when no GitHub Release is available.
     Auto-restarts PowerShell after installing Rust toolchain so PATH is recognized.
@@ -39,7 +39,7 @@ $REPO = "TacShot/nodesec"
 $BINARY = "nodesec.exe"
 $INSTALLER_VERSION = "0.1.0"
 $FALLBACK_VERSION = "0.1.0"
-$DEFAULT_INSTALL_DIR = "C:\nodesec"
+$DEFAULT_INSTALL_DIR = 'C:\nodesec'
 
 function Write-Info { param($msg) Write-Host "[INFO] $msg" -ForegroundColor Cyan }
 function Write-Success { param($msg) Write-Host "[SUCCESS] $msg" -ForegroundColor Green }
@@ -49,7 +49,7 @@ function Write-Error { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Re
 function Show-Help {
     @"
 nodesec-installer v$using:INSTALLER_VERSION
-Cross-platform net-installer for nodesec System & Network Security Platform
+Cross-platform net-installer for nodesec System and Network Security Platform
 
 Usage: install.ps1 [OPTIONS]
 
@@ -85,22 +85,22 @@ if ($Help) { Show-Help; exit 0 }
 
 # If resuming after PowerShell restart, skip the rustup restart step
 if ($Resume) {
-    $env:RESUMING = "1"
+    $env:RESUMING = '1'
 }
 
 if ($Uninstall) {
-    $installDir = if ($Prefix) { $Prefix } elseif ($Target -eq 'system') { "C:\Program Files\nodesec" } else { "C:\nodesec" }
+    $installDir = if ($Prefix) { $Prefix } elseif ($Target -eq 'system') { 'C:\Program Files\nodesec' } else { $DEFAULT_INSTALL_DIR }
     $binary = Join-Path $installDir $BINARY_NAME
     if (Test-Path $binary) {
         Remove-Item $binary -Force
         Write-Success ("Removed binary: " + $binary)
     }
-    $shortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\NODESEC System & Network Security.lnk"
+    $shortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\NODESEC System and Network Security.lnk'
     if (Test-Path $shortcutPath) {
         Remove-Item $shortcutPath -Force
-        Write-Success "Removed Start Menu shortcut"
+        Write-Success 'Removed Start Menu shortcut'
     }
-    Write-Success "Uninstall complete."
+    Write-Success 'Uninstall complete.'
     exit 0
 }
 
@@ -114,7 +114,7 @@ $BINARY_NAME = "nodesec.exe"
 
 function Get-InstallDir {
     if ($Prefix) { return $Prefix }
-    if ($Target -eq 'system') { return "C:\Program Files\nodesec" }
+    if ($Target -eq 'system') { return 'C:\Program Files\nodesec' }
     return $DEFAULT_INSTALL_DIR
 }
 
@@ -124,61 +124,61 @@ function Is-Installed {
 }
 
 function Get-LatestVersion {
-    Write-Info "Fetching latest version..."
+    Write-Info 'Fetching latest version...'
     try {
-        $url = "https://api.github.com/repos/" + $REPO + "/releases/latest"
+        $url = 'https://api.github.com/repos/' + $REPO + '/releases/latest'
         $response = Invoke-RestMethod -Uri $url -Headers @{ "Accept" = "application/vnd.github.v3+json" } -ErrorAction Stop
         $version = $response.tag_name.TrimStart('v')
-        Write-Info ("Found release: " + $version)
+        Write-Info ('Found release: ' + $version)
         return $version
     }
     catch {
-        Write-Warn "No GitHub Release found. Will fall back to building from source."
+        Write-Warn 'No GitHub Release found. Will fall back to building from source.'
         return $FALLBACK_VERSION
     }
 }
 
 function Install-Dependencies {
-    Write-Info "Checking dependencies..."
+    Write-Info 'Checking dependencies...'
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Info "winget found, checking for required packages..."
+        Write-Info 'winget found, checking for required packages...'
     }
     elseif (Get-Command choco -ErrorAction SilentlyContinue) {
-        Write-Info "Chocolatey found..."
+        Write-Info 'Chocolatey found...'
     }
     elseif (Get-Command scoop -ErrorAction SilentlyContinue) {
-        Write-Info "Scoop found..."
+        Write-Info 'Scoop found...'
     }
     else {
-        Write-Warn "No package manager found (winget/choco/scoop). Skipping system dependencies."
+        Write-Warn 'No package manager found (winget/choco/scoop). Skipping system dependencies.'
     }
 }
 
 function Install-Binary {
     param($version)
-    $assetName = $ASSET_PATTERN + "-" + $version + ".zip"
-    $downloadUrl = "https://github.com/" + $REPO + "/releases/download/v" + $version + "/" + $assetName
+    $assetName = $ASSET_PATTERN + '-' + $version + '.zip'
+    $downloadUrl = 'https://github.com/' + $REPO + '/releases/download/v' + $version + '/' + $assetName
 
-    Write-Info ("Downloading " + $BINARY + " " + $version + " from " + $downloadUrl)
+    Write-Info ('Downloading ' + $BINARY + ' ' + $version + ' from ' + $downloadUrl)
 
     try {
-        Invoke-WebRequest -Uri $downloadUrl -OutFile ([System.IO.Path]::GetTempPath() + "nodesec-install.zip") -UseBasicParsing -ErrorAction Stop
+        Invoke-WebRequest -Uri $downloadUrl -OutFile ([System.IO.Path]::GetTempPath() + 'nodesec-install.zip') -UseBasicParsing -ErrorAction Stop
     }
     catch {
-        Write-Warn "Binary download failed (" + $_.Exception.Message + "). Falling back to source build."
+        Write-Warn ('Binary download failed (' + $_.Exception.Message + '). Falling back to source build.')
         Install-FromSource -version $version
         return
     }
 
-    $tempDir = [System.IO.Path]::GetTempPath() + "nodesec-install-" + [Guid]::NewGuid()
+    $tempDir = [System.IO.Path]::GetTempPath() + 'nodesec-install-' + [Guid]::NewGuid()
     New-Item -ItemType Directory -Path $tempDir | Out-Null
-    $archivePath = Join-Path $tempDir "nodesec-install.zip"
+    $archivePath = Join-Path $tempDir 'nodesec-install.zip'
 
     Expand-Archive -Path $archivePath -DestinationPath $tempDir -Force
 
     $binaryPath = Get-ChildItem -Path $tempDir -Filter $BINARY_NAME -Recurse | Select-Object -First 1
     if (-not $binaryPath) {
-        Write-Warn "Binary not found in archive. Falling back to source build."
+        Write-Warn 'Binary not found in archive. Falling back to source build.'
         Install-FromSource -version $version
         return
     }
@@ -188,60 +188,60 @@ function Install-Binary {
 
     Copy-Item $binaryPath.FullName (Join-Path $installDir $BINARY_NAME) -Force
 
-    Write-Success ("Installed to " + $installDir + "\" + $BINARY_NAME)
+    Write-Success ('Installed to ' + $installDir + '\' + $BINARY_NAME)
 }
 
 function Install-FromSource {
     param($version)
-    Write-Info ("Building nodesec " + $version + " from source...")
+    Write-Info ('Building nodesec ' + $version + ' from source...')
 
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-        Write-Info "Rust toolchain not found. Installing via rustup..."
+        Write-Info 'Rust toolchain not found. Installing via rustup...'
 
         # Save resume state so we know to continue after restart
-        $resumeFile = [System.IO.Path]::GetTempPath() + "nodesec-resume.txt"
-        Set-Content -Path $resumeFile -Value "1"
+        $resumeFile = [System.IO.Path]::GetTempPath() + 'nodesec-resume.txt'
+        Set-Content -Path $resumeFile -Value '1'
 
         # Launch new PowerShell window with resume flag
         $scriptPath = $PSCommandPath
         if (-not $scriptPath) {
             $scriptPath = $PSScriptRoot
         }
-        if (-not $scriptPath -or $scriptPath -eq "") {
-            $scriptPath = "https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.ps1"
+        if (-not $scriptPath -or $scriptPath -eq '') {
+            $scriptPath = 'https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.ps1'
             $downloadUrl = $scriptPath
-            $localScript = [System.IO.Path]::GetTempPath() + "nodesec-installer.ps1"
+            $localScript = [System.IO.Path]::GetTempPath() + 'nodesec-installer.ps1'
             Invoke-WebRequest -Uri $downloadUrl -OutFile $localScript -UseBasicParsing
             $scriptPath = $localScript
         }
 
-        $args = "--resume --version " + $version
-        if ($FromSource) { $args += " --from-source" }
-        if ($SkipDeps) { $args += " --skip-deps" }
-        if ($Force) { $args += " --force" }
-        if ($Target -eq 'system') { $args += " --target system" }
-        if ($Prefix) { $args += " --prefix " + $Prefix }
+        $args = '--resume --version ' + $version
+        if ($FromSource) { $args += ' --from-source' }
+        if ($SkipDeps) { $args += ' --skip-deps' }
+        if ($Force) { $args += ' --force' }
+        if ($Target -eq 'system') { $args += ' --target system' }
+        if ($Prefix) { $args += ' --prefix ' + $Prefix }
 
-        Write-Info "Launching new PowerShell window to continue after Rust install..."
-        Start-Process powershell.exe -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `" + $scriptPath + `\" " + $args
+        Write-Info 'Launching new PowerShell window to continue after Rust install...'
+        Start-Process powershell.exe -ArgumentList '-NoExit -ExecutionPolicy Bypass -File "' + $scriptPath + '" ' + $args
 
-        Write-Warn "New PowerShell window launched. Please complete the installation there."
-        Write-Warn "This window will close. Continue in the new window."
+        Write-Warn 'New PowerShell window launched. Please complete the installation there.'
+        Write-Warn 'This window will close. Continue in the new window.'
         exit 0
     }
 
-    $tempDir = [System.IO.Path]::GetTempPath() + "nodesec-build-" + [Guid]::NewGuid()
+    $tempDir = [System.IO.Path]::GetTempPath() + 'nodesec-build-' + [Guid]::NewGuid()
     New-Item -ItemType Directory -Path $tempDir | Out-Null
 
     # Clone the repository - try version tag first, then fall back to main
-    $cloneResult = git clone --branch "v" + $version --depth 1 "https://github.com/" + $REPO + ".git" $tempDir 2>&1
+    $cloneResult = git clone --branch 'v' + $version --depth 1 'https://github.com/' + $REPO + '.git' $tempDir 2>&1
     if ($LASTEXITCODE -ne 0) {
-        Write-Warn "Tag v" + $version + " not found. Falling back to main branch."
+        Write-Warn 'Tag v' + $version + ' not found. Falling back to main branch.'
         Remove-Item $tempDir -Recurse -Force
         New-Item -ItemType Directory -Path $tempDir | Out-Null
-        $cloneResult = git clone --branch main --depth 1 "https://github.com/" + $REPO + ".git" $tempDir 2>&1
+        $cloneResult = git clone --branch main --depth 1 'https://github.com/' + $REPO + '.git' $tempDir 2>&1
         if ($LASTEXITCODE -ne 0) {
-            Write-Error "Failed to clone repository. Installation aborted."
+            Write-Error 'Failed to clone repository. Installation aborted.'
             exit 1
         }
     }
@@ -249,15 +249,15 @@ function Install-FromSource {
     Set-Location $tempDir
 
     # Verify Cargo.toml exists before building
-    if (-not (Test-Path (Join-Path $tempDir "Cargo.toml"))) {
-        Write-Error "Cargo.toml not found in cloned repository. Installation aborted."
+    if (-not (Test-Path (Join-Path $tempDir 'Cargo.toml'))) {
+        Write-Error 'Cargo.toml not found in cloned repository. Installation aborted.'
         exit 1
     }
 
-    Write-Info "Building with cargo..."
+    Write-Info 'Building with cargo...'
     $buildResult = cargo build --release --workspace 2>&1
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "Cargo build failed. Installation aborted."
+        Write-Error 'Cargo build failed. Installation aborted.'
         exit 1
     }
 
@@ -265,8 +265,8 @@ function Install-FromSource {
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 
     $anyBinaryCopied = $false
-    foreach ($binary in @("nodesec.exe", "nodesec-cli.exe", "nodesec-tui.exe", "nodesec-gui.exe", "nodesec-installer.exe")) {
-        $src = "target\release\" + $binary
+    foreach ($binary in @('nodesec.exe', 'nodesec-cli.exe', 'nodesec-tui.exe', 'nodesec-gui.exe', 'nodesec-installer.exe')) {
+        $src = 'target\release\' + $binary
         if (Test-Path $src) {
             Copy-Item $src (Join-Path $installDir $binary) -Force
             $anyBinaryCopied = $true
@@ -274,89 +274,89 @@ function Install-FromSource {
     }
 
     if (-not $anyBinaryCopied) {
-        Write-Error "No binaries were produced by the build. Installation aborted."
+        Write-Error 'No binaries were produced by the build. Installation aborted.'
         exit 1
     }
 
-    Write-Success "Built and installed from source"
+    Write-Success 'Built and installed from source'
 }
 
 function Create-Shortcuts {
     $installDir = Get-InstallDir
     $binary = Join-Path $installDir $BINARY_NAME
 
-    $shortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\NODESEC System & Network Security.lnk"
+    $shortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\NODESEC System and Network Security.lnk'
     $WshShell = New-Object -ComObject WScript.Shell
     $shortcut = $WshShell.CreateShortcut($shortcutPath)
     $shortcut.TargetPath = $binary
-    $shortcut.Description = "NODESEC System & Network Security Platform"
+    $shortcut.Description = 'NODESEC System and Network Security Platform'
     $shortcut.Save()
 
-    Write-Success "Created Start Menu shortcut"
+    Write-Success 'Created Start Menu shortcut'
 }
 
 function Add-ToPath {
     $installDir = Get-InstallDir
     $currentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
 
-    if ($currentPath -notlike "*" + $installDir + "*") {
-        $newPath = $currentPath + ";" + $installDir
+    if ($currentPath -notlike '*' + $installDir + '*') {
+        $newPath = $currentPath + ';' + $installDir
         [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
-        Write-Success ("Added " + $installDir + " to user PATH")
-        Write-Warn "Please restart your terminal for PATH changes to take effect"
+        Write-Success ('Added ' + $installDir + ' to user PATH')
+        Write-Warn 'Please restart your terminal for PATH changes to take effect'
     }
 }
 
 function Uninstall {
-    Write-Info "Uninstalling nodesec..."
+    Write-Info 'Uninstalling nodesec...'
 
-    $installDir = if ($Prefix) { $Prefix } elseif ($Target -eq 'system') { "C:\Program Files\nodesec" } else { $DEFAULT_INSTALL_DIR }
+    $installDir = if ($Prefix) { $Prefix } elseif ($Target -eq 'system') { 'C:\Program Files\nodesec' } else { $DEFAULT_INSTALL_DIR }
     $binary = Join-Path $installDir $BINARY_NAME
 
     if (Test-Path $binary) {
         Remove-Item $binary -Force
-        Write-Success ("Removed binary: " + $binary)
+        Write-Success ('Removed binary: ' + $binary)
     }
 
-    $shortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\NODESEC System & Network Security.lnk"
+    $shortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\NODESEC System and Network Security.lnk'
     if (Test-Path $shortcutPath) {
         Remove-Item $shortcutPath -Force
-        Write-Success "Removed Start Menu shortcut"
+        Write-Success 'Removed Start Menu shortcut'
     }
 
-    Write-Success "Uninstall complete."
+    Write-Success 'Uninstall complete.'
     exit 0
 }
 
 function Print-PostInstallInfo {
     $installDir = Get-InstallDir
     Write-Host
-    Write-Success "Installation complete!"
-    Write-Host ("Binary installed to: " + $installDir)
+    Write-Success 'Installation complete!'
+    Write-Host ('Binary installed to: ' + $installDir)
     Write-Host "Run 'nodesec --help' to get started"
     Write-Host
-    Write-Host "Note: Please restart your terminal for PATH changes to take effect."
+    Write-Host 'Note: Please restart your terminal for PATH changes to take effect.'
 }
 
 # Main execution
-Write-Host ("nodesec-installer v" + $INSTALLER_VERSION) -ForegroundColor Cyan
-Write-Host "Cross-platform net-installer for nodesec System & Network Security Platform"
+Write-Host ('nodesec-installer v' + $INSTALLER_VERSION) -ForegroundColor Cyan
+Write-Host 'Cross-platform net-installer for nodesec System and Network Security Platform'
 Write-Host
 
 if ($Uninstall) { Uninstall; exit 0 }
 
 if (-not $Version) {
     $Version = Get-LatestVersion
-    Write-Info ("Latest version: " + $Version)
+    Write-Info ('Latest version: ' + $Version)
 }
 
 if ($DryRun) {
-    Write-Info ("[DRY RUN] Would install " + $BINARY + " " + $Version + " for " + $ASSET_PATTERN)
+    Write-Info ('[DRY RUN] Would install ' + $BINARY + ' ' + $Version + ' for ' + $ASSET_PATTERN)
     exit 0
 }
 
 if (-not $Force -and (Is-Installed)) {
-    Write-Warn ($BINARY_NAME + " is already installed. Use --force to reinstall.")
+    Write-Warn ($BINARY_NAME + ' is already installed. Use --force to reinstall.')
     exit 0
 }
 
@@ -374,8 +374,8 @@ Create-Shortcuts
 Add-ToPath
 
 Write-Host
-Write-Success "Installation complete!"
-Write-Host ("Binary installed to: " + (Get-InstallDir))
+Write-Success 'Installation complete!'
+Write-Host ('Binary installed to: ' + (Get-InstallDir))
 Write-Host "Run 'nodesec --help' to get started"
 Write-Host
-Write-Host "Note: Please restart your terminal for PATH changes to take effect."
+Write-Host 'Note: Please restart your terminal for PATH changes to take effect.'
