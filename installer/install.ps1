@@ -223,7 +223,7 @@ function Install-FromSource {
         if ($Prefix) { $args += " --prefix " + $Prefix }
 
         Write-Info "Launching new PowerShell window to continue after Rust install..."
-        Start-Process powershell.exe -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `" + $scriptPath + `" " + $args
+        Start-Process powershell.exe -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `" + $scriptPath + `\" " + $args
 
         Write-Warn "New PowerShell window launched. Please complete the installation there."
         Write-Warn "This window will close. Continue in the new window."
@@ -233,24 +233,49 @@ function Install-FromSource {
     $tempDir = [System.IO.Path]::GetTempPath() + "nodesec-build-" + [Guid]::NewGuid()
     New-Item -ItemType Directory -Path $tempDir | Out-Null
 
+    # Clone the repository - try version tag first, then fall back to main
     $cloneResult = git clone --branch "v" + $version --depth 1 "https://github.com/" + $REPO + ".git" $tempDir 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "Tag v" + $version + " not found. Falling back to main branch."
         Remove-Item $tempDir -Recurse -Force
         New-Item -ItemType Directory -Path $tempDir | Out-Null
-        git clone --branch main --depth 1 "https://github.com/" + $REPO + ".git" $tempDir
+        $cloneResult = git clone --branch main --depth 1 "https://github.com/" + $REPO + ".git" $tempDir 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to clone repository. Installation aborted."
+            exit 1
+        }
     }
+
     Set-Location $tempDir
-    cargo build --release --workspace
+
+    # Verify Cargo.toml exists before building
+    if (-not (Test-Path (Join-Path $tempDir "Cargo.toml"))) {
+        Write-Error "Cargo.toml not found in cloned repository. Installation aborted."
+        exit 1
+    }
+
+    Write-Info "Building with cargo..."
+    $buildResult = cargo build --release --workspace 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Cargo build failed. Installation aborted."
+        exit 1
+    }
 
     $installDir = Get-InstallDir
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 
+    $anyBinaryCopied = $false
     foreach ($binary in @("nodesec.exe", "nodesec-cli.exe", "nodesec-tui.exe", "nodesec-gui.exe", "nodesec-installer.exe")) {
         $src = "target\release\" + $binary
         if (Test-Path $src) {
             Copy-Item $src (Join-Path $installDir $binary) -Force
+            $anyBinaryCopied = $true
         }
+    }
+
+    if (-not $anyBinaryCopied) {
+        Write-Error "No binaries were produced by the build. Installation aborted."
+        exit 1
     }
 
     Write-Success "Built and installed from source"
