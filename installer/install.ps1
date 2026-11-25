@@ -240,17 +240,12 @@ function Install-FromSource {
     $tempDir = [System.IO.Path]::GetTempPath() + 'nodesec-build-' + [Guid]::NewGuid()
     New-Item -ItemType Directory -Path $tempDir | Out-Null
 
-    # Clone the repository - try version tag first, then fall back to main
-    $cloneResult = git clone --branch 'v' + $version --depth 1 'https://github.com/' + $REPO + '.git' $tempDir 2>&1
+    # Clone the repository (default branch)
+    Write-Info 'Cloning repository...'
+    & git clone --depth 1 'https://github.com/' + $REPO + '.git' $tempDir 2>&1
     if ($LASTEXITCODE -ne 0) {
-        Write-Warn 'Tag v' + $version + ' not found. Falling back to main branch.'
-        Remove-Item $tempDir -Recurse -Force
-        New-Item -ItemType Directory -Path $tempDir | Out-Null
-        $cloneResult = git clone --branch main --depth 1 'https://github.com/' + $REPO + '.git' $tempDir 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error 'Failed to clone repository. Installation aborted.'
-            exit 1
-        }
+        Write-Error 'Failed to clone repository. Installation aborted.'
+        exit 1
     }
 
     Set-Location $tempDir
