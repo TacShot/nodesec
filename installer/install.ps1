@@ -137,7 +137,7 @@ function Install-Binary {
         Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath -UseBasicParsing
     }
     catch {
-        Write-Error "Failed to download from $downloadUrl: $_"
+        Write-Error "Failed to download from $($downloadUrl): $_"
         exit 1
     }
 
