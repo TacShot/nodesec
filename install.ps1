@@ -11,5 +11,5 @@ $url = "https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install
 $localScript = [System.IO.Path]::GetTempPath() + "nodesec-installer.ps1"
 Invoke-WebRequest -Uri $url -OutFile $localScript -UseBasicParsing
 
-# Forward any arguments passed to this script
-& $localScript @args
+# Execute the real installer
+& $localScript
