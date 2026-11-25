@@ -4,6 +4,8 @@
 .DESCRIPTION
     Cross-platform net-installer for nodesec System & Network Security Platform.
     Downloads and installs the latest nodesec release with all dependencies.
+    Falls back to building from source when no GitHub Release is available.
+    Auto-restarts PowerShell after installing Rust toolchain so PATH is recognized.
 .EXAMPLE
     # Install latest version
     iwr -useb https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.ps1 | iex
@@ -29,13 +31,15 @@ param(
     [ValidateSet('user', 'system')]
     [string]$Target = 'user',
     [switch]$Uninstall,
-    [switch]$Help
+    [switch]$Help,
+    [switch]$Resume
 )
 
 $REPO = "TacShot/nodesec"
 $BINARY = "nodesec.exe"
 $INSTALLER_VERSION = "0.1.0"
 $FALLBACK_VERSION = "0.1.0"
+$DEFAULT_INSTALL_DIR = "C:\nodesec"
 
 function Write-Info { param($msg) Write-Host "[INFO] $msg" -ForegroundColor Cyan }
 function Write-Success { param($msg) Write-Host "[SUCCESS] $msg" -ForegroundColor Green }
@@ -52,13 +56,14 @@ Usage: install.ps1 [OPTIONS]
 Options:
     --from-source       Build from source instead of downloading pre-built binary
     --version VERSION   Install specific version (default: latest)
-    --prefix PATH       Install to custom directory
+    --prefix PATH       Install to custom directory (default: C:\nodesec)
     --skip-deps         Skip system dependency installation
     --force             Force reinstall even if already installed
     --dry-run           Show what would be done without installing
     --verbose           Verbose output
     --target TARGET     Installation target: user (default) or system
     --uninstall         Uninstall nodesec
+    --resume            Resume after PowerShell restart (internal)
     --help              Show this help
 
 Examples:
@@ -78,6 +83,27 @@ Examples:
 
 if ($Help) { Show-Help; exit 0 }
 
+# If resuming after PowerShell restart, skip the rustup restart step
+if ($Resume) {
+    $env:RESUMING = "1"
+}
+
+if ($Uninstall) {
+    $installDir = if ($Prefix) { $Prefix } elseif ($Target -eq 'system') { "C:\Program Files\nodesec" } else { "C:\nodesec" }
+    $binary = Join-Path $installDir $BINARY_NAME
+    if (Test-Path $binary) {
+        Remove-Item $binary -Force
+        Write-Success ("Removed binary: " + $binary)
+    }
+    $shortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\NODESEC System & Network Security.lnk"
+    if (Test-Path $shortcutPath) {
+        Remove-Item $shortcutPath -Force
+        Write-Success "Removed Start Menu shortcut"
+    }
+    Write-Success "Uninstall complete."
+    exit 0
+}
+
 # Detect architecture
 $ARCH = [Environment]::GetEnvironmentVariable("PROCESSOR_ARCHITECTURE")
 if ($ARCH -eq "AMD64") { $ASSET_PATTERN = "nodesec-x86_64-pc-windows-msvc" }
@@ -89,7 +115,7 @@ $BINARY_NAME = "nodesec.exe"
 function Get-InstallDir {
     if ($Prefix) { return $Prefix }
     if ($Target -eq 'system') { return "C:\Program Files\nodesec" }
-    return Join-Path $env:LOCALAPPDATA "nodesec\bin"
+    return $DEFAULT_INSTALL_DIR
 }
 
 function Is-Installed {
@@ -171,9 +197,37 @@ function Install-FromSource {
 
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
         Write-Info "Rust toolchain not found. Installing via rustup..."
-        $script = "Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile 'rustup-init.exe'; .\rustup-init.exe -y"
-        Invoke-Expression $script
-        Write-Success "Rust toolchain installed. Please restart your shell."
+
+        # Save resume state so we know to continue after restart
+        $resumeFile = [System.IO.Path]::GetTempPath() + "nodesec-resume.txt"
+        Set-Content -Path $resumeFile -Value "1"
+
+        # Launch new PowerShell window with resume flag
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) {
+            $scriptPath = $PSScriptRoot
+        }
+        if (-not $scriptPath -or $scriptPath -eq "") {
+            $scriptPath = "https://raw.githubusercontent.com/TacShot/nodesec/main/installer/install.ps1"
+            $downloadUrl = $scriptPath
+            $localScript = [System.IO.Path]::GetTempPath() + "nodesec-installer.ps1"
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $localScript -UseBasicParsing
+            $scriptPath = $localScript
+        }
+
+        $args = "--resume --version " + $version
+        if ($FromSource) { $args += " --from-source" }
+        if ($SkipDeps) { $args += " --skip-deps" }
+        if ($Force) { $args += " --force" }
+        if ($Target -eq 'system') { $args += " --target system" }
+        if ($Prefix) { $args += " --prefix " + $Prefix }
+
+        Write-Info "Launching new PowerShell window to continue after Rust install..."
+        Start-Process powershell.exe -ArgumentList "-NoExit -ExecutionPolicy Bypass -File `" + $scriptPath + `" " + $args
+
+        Write-Warn "New PowerShell window launched. Please complete the installation there."
+        Write-Warn "This window will close. Continue in the new window."
+        exit 0
     }
 
     $tempDir = [System.IO.Path]::GetTempPath() + "nodesec-build-" + [Guid]::NewGuid()
@@ -231,7 +285,7 @@ function Add-ToPath {
 function Uninstall {
     Write-Info "Uninstalling nodesec..."
 
-    $installDir = Get-InstallDir
+    $installDir = if ($Prefix) { $Prefix } elseif ($Target -eq 'system') { "C:\Program Files\nodesec" } else { $DEFAULT_INSTALL_DIR }
     $binary = Join-Path $installDir $BINARY_NAME
 
     if (Test-Path $binary) {
