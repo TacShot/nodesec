@@ -261,6 +261,8 @@ function Install-FromSource {
     cargo build --release --workspace
     if ($LASTEXITCODE -ne 0) {
         Write-Error 'Cargo build failed. Installation aborted.'
+        Write-Error 'On Windows, ensure Visual Studio Build Tools with C++ workload is installed.'
+        Write-Error 'Download: https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022'
         exit 1
     }
 
