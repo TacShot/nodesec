@@ -12,9 +12,4 @@ $localScript = [System.IO.Path]::GetTempPath() + "nodesec-installer.ps1"
 Invoke-WebRequest -Uri $url -OutFile $localScript -UseBasicParsing
 
 # Forward any arguments passed to this script
-$argsString = ""
-if ($args) {
-    $argsString = $args -join " "
-}
-
-Invoke-Expression "& `" + $localScript + `" " + $argsString
+& $localScript @args
