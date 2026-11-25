@@ -1549,10 +1549,18 @@ impl App {
                 });
                 ui.separator();
 
-                // Try to read and display report JSON
-                let report_json_path = std::path::Path::new(report_path).join("report.json");
-                if report_json_path.exists() {
-                    if let Ok(contents) = std::fs::read_to_string(&report_json_path) {
+                // Determine report path - try directory first, then file
+                let report_dir = std::path::Path::new(report_path);
+                let json_path = report_dir.join("report.json");
+                let txt_path = report_dir.join("report.txt");
+                let csv_path = report_dir.join("report.csv");
+
+                // Also check if report_path itself is a file (old flat format)
+                let is_file = report_dir.is_file();
+
+                if json_path.exists() {
+                    // New format: report.json in subdirectory
+                    if let Ok(contents) = std::fs::read_to_string(&json_path) {
                         if let Ok(report) = serde_json::from_str::<serde_json::Value>(&contents) {
                             ui.label(egui::RichText::new("Scan Results").color(ORANGE).strong());
                             ui.add_space(4.0);
@@ -1678,19 +1686,97 @@ impl App {
                                 }
                             }
 
-                            if report.get("results").is_some() || report.get("summary").is_some() {
-                                ui.label(egui::RichText::new("Full report JSON available at:").color(GRAY).size(10.0));
-                                ui.label(egui::RichText::new(report_path).color(GRAY).size(9.0));
-                            }
+                            ui.label(egui::RichText::new("Full report JSON available at:").color(GRAY).size(10.0));
+                            ui.label(egui::RichText::new(json_path.to_string_lossy()).color(GRAY).size(9.0));
                         } else {
                             ui.label(egui::RichText::new("Failed to parse report JSON").color(RED));
                         }
                     } else {
-                        ui.label(egui::RichText::new("Failed to read report file").color(RED));
+                        ui.label(egui::RichText::new("Failed to read report.json").color(RED));
+                    }
+                } else if txt_path.exists() {
+                    // New format: report.txt in subdirectory
+                    if let Ok(contents) = std::fs::read_to_string(&txt_path) {
+                        ui.label(egui::RichText::new("Report Contents (TXT)").color(ORANGE).strong());
+                        ui.add_space(4.0);
+                        egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+                            ui.label(egui::RichText::new(contents).color(WHITE).size(9.0));
+                        });
+                        ui.separator();
+                        ui.label(egui::RichText::new("Full report TXT available at:").color(GRAY).size(10.0));
+                        ui.label(egui::RichText::new(txt_path.to_string_lossy()).color(GRAY).size(9.0));
+                    } else {
+                        ui.label(egui::RichText::new("Failed to read report.txt").color(RED));
+                    }
+                } else if csv_path.exists() {
+                    // New format: report.csv in subdirectory
+                    if let Ok(contents) = std::fs::read_to_string(&csv_path) {
+                        ui.label(egui::RichText::new("Report Contents (CSV)").color(ORANGE).strong());
+                        ui.add_space(4.0);
+                        egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+                            ui.label(egui::RichText::new(contents).color(WHITE).size(9.0));
+                        });
+                        ui.separator();
+                        ui.label(egui::RichText::new("Full report CSV available at:").color(GRAY).size(10.0));
+                        ui.label(egui::RichText::new(csv_path.to_string_lossy()).color(GRAY).size(9.0));
+                    } else {
+                        ui.label(egui::RichText::new("Failed to read report.csv").color(RED));
+                    }
+                } else if is_file {
+                    // Old flat format: report_path itself is a file
+                    let ext = report_dir.extension().and_then(|e| e.to_str()).unwrap_or("");
+                    if ext == "json" {
+                        if let Ok(contents) = std::fs::read_to_string(report_dir) {
+                            if let Ok(report) = serde_json::from_str::<serde_json::Value>(&contents) {
+                                ui.label(egui::RichText::new("Scan Results (JSON)").color(ORANGE).strong());
+                                ui.add_space(4.0);
+                                if let Some(summary) = report.get("summary") {
+                                    let passed = summary.get("passed").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    let failed = summary.get("failed").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    let skipped = summary.get("skipped").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new(format!("Passed: {}", passed)).color(GREEN));
+                                        ui.add_space(16.0);
+                                        ui.colored_label(RED, format!("Failed: {}", failed));
+                                        ui.add_space(16.0);
+                                        ui.label(egui::RichText::new(format!("Skipped: {}", skipped)).color(YELLOW));
+                                    });
+                                    ui.separator();
+                                }
+                                ui.label(egui::RichText::new(format!("Raw JSON: {} bytes", contents.len())).color(GRAY).size(9.0));
+                            } else {
+                                ui.label(egui::RichText::new("Failed to parse JSON report").color(RED));
+                            }
+                        } else {
+                            ui.label(egui::RichText::new("Failed to read JSON report").color(RED));
+                        }
+                    } else if ext == "txt" {
+                        if let Ok(contents) = std::fs::read_to_string(report_dir) {
+                            ui.label(egui::RichText::new("Report Contents (TXT)").color(ORANGE).strong());
+                            ui.add_space(4.0);
+                            egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+                                ui.label(egui::RichText::new(contents).color(WHITE).size(9.0));
+                            });
+                        } else {
+                            ui.label(egui::RichText::new("Failed to read TXT report").color(RED));
+                        }
+                    } else if ext == "csv" {
+                        if let Ok(contents) = std::fs::read_to_string(report_dir) {
+                            ui.label(egui::RichText::new("Report Contents (CSV)").color(ORANGE).strong());
+                            ui.add_space(4.0);
+                            egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+                                ui.label(egui::RichText::new(contents).color(WHITE).size(9.0));
+                            });
+                        } else {
+                            ui.label(egui::RichText::new("Failed to read CSV report").color(RED));
+                        }
+                    } else {
+                        ui.label(egui::RichText::new("Unknown report file format").color(RED));
                     }
                 } else {
-                    ui.label(egui::RichText::new("No report.json found in report directory").color(GRAY));
+                    ui.label(egui::RichText::new("No report file found").color(GRAY));
                     ui.label(egui::RichText::new(report_path).color(GRAY).size(9.0));
+                    ui.label(egui::RichText::new("Tried: report.json, report.txt, report.csv").color(GRAY).size(9.0));
                 }
             });
         }
