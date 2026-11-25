@@ -9,6 +9,7 @@ set -euo pipefail
 REPO="TacShot/nodesec"
 BINARY="nodesec"
 INSTALLER_VERSION="0.1.0"
+FALLBACK_VERSION="0.1.0"
 
 # Colors
 RED='\033[0;31m'
@@ -182,8 +183,14 @@ detect_package_manager() {
 fetch_latest_version() {
     local url="https://api.github.com/repos/${REPO}/releases/latest"
     local version
-    version=$(curl -fsSL -H "Accept: application/vnd.github.v3+json" "$url" | grep '"tag_name"' | sed -E 's/.*"tag_name": "v?([^"]+)".*/\1/')
-    echo "$version"
+    version=$(curl -fsSL -H "Accept: application/vnd.github.v3+json" "$url" 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"tag_name": "v?([^"]+)".*/\1/')
+    if [ -z "$version" ]; then
+        log_warn "No GitHub Release found. Will fall back to building from source."
+        echo "$FALLBACK_VERSION"
+    else
+        log_info "Found release: ${version}"
+        echo "$version"
+    fi
 }
 
 # Download and install binary
@@ -206,8 +213,9 @@ install_binary() {
     local archive_path="${temp_dir}/${asset_name}"
 
     if ! curl -fsSL -L -o "${archive_path}" "${download_url}"; then
-        log_error "Failed to download from ${download_url}"
-        return 1
+        log_warn "Binary download failed. Falling back to source build."
+        install_from_source "$version"
+        return $?
     fi
 
     # Extract
@@ -251,7 +259,11 @@ install_from_source() {
     local temp_dir
     temp_dir=$(mktemp -d -t nodesec-build-XXXXXX)
 
-    git clone --branch "v${version}" --depth 1 "https://github.com/${REPO}.git" "${temp_dir}"
+    if ! git clone --branch "v${version}" --depth 1 "https://github.com/${REPO}.git" "${temp_dir}" 2>/dev/null; then
+        log_warn "Tag v${version} not found. Falling back to main branch."
+        rm -rf "${temp_dir}"
+        git clone --branch main --depth 1 "https://github.com/${REPO}.git" "${temp_dir}"
+    fi
     cd "${temp_dir}"
     cargo build --release --workspace
 
