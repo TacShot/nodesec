@@ -195,6 +195,13 @@ function Install-FromSource {
     param($version)
     Write-Info ('Building nodesec ' + $version + ' from source...')
 
+    # Check if git is installed
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Error 'Git is not installed. Please install Git from https://git-scm.com/download/win and try again.'
+        exit 1
+    }
+
+    # Check if cargo is installed
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
         Write-Info 'Rust toolchain not found. Installing via rustup...'
 
