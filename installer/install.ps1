@@ -243,9 +243,11 @@ function Install-FromSource {
     # Clone the repository (default branch)
     Write-Info 'Cloning repository...'
     $repoUrl = 'https://github.com/' + $REPO + '.git'
-    $cloneOutput = & git clone --depth 1 $repoUrl $tempDir 2>&1
+    $tempDir = [System.IO.Path]::GetTempPath() + 'nodesec-build-' + [Guid]::NewGuid()
+    New-Item -ItemType Directory -Path $tempDir | Out-Null
+    git clone --depth 1 $repoUrl $tempDir
     if ($LASTEXITCODE -ne 0) {
-        Write-Error $cloneOutput
+        Write-Error 'Git clone failed. Installation aborted.'
         exit 1
     }
 
@@ -254,6 +256,9 @@ function Install-FromSource {
     # Verify Cargo.toml exists before building
     if (-not (Test-Path (Join-Path $tempDir 'Cargo.toml'))) {
         Write-Error 'Cargo.toml not found in cloned repository. Installation aborted.'
+        exit 1
+    }
+        Write-Error 'Repository cloned but Cargo.toml not found. Installation aborted.'
         exit 1
     }
 
