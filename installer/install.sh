@@ -410,7 +410,12 @@ main() {
     if [[ "${SKIP_DEPS}" != "true" ]]; then
         log_info "Installing system dependencies..."
         if [[ "${PKG_MGR}" != "none" ]]; then
-            eval "${INSTALL_CMD} ${DEPS}"
+            if [[ "${EUID}" -ne 0 ]] && command -v sudo >/dev/null 2>&1; then
+                log_info "Using sudo for system dependency installation..."
+                eval "sudo ${INSTALL_CMD} ${DEPS}"
+            else
+                eval "${INSTALL_CMD} ${DEPS}"
+            fi
         fi
     fi
 
