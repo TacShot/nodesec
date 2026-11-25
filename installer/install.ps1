@@ -35,6 +35,7 @@ param(
 $REPO = "TacShot/nodesec"
 $BINARY = "nodesec.exe"
 $INSTALLER_VERSION = "0.1.0"
+$FALLBACK_VERSION = "0.1.0"
 
 function Write-Info { param($msg) Write-Host "[INFO] $msg" -ForegroundColor Cyan }
 function Write-Success { param($msg) Write-Host "[SUCCESS] $msg" -ForegroundColor Green }
@@ -98,9 +99,17 @@ function Is-Installed {
 
 function Get-LatestVersion {
     Write-Info "Fetching latest version..."
-    $url = "https://api.github.com/repos/" + $REPO + "/releases/latest"
-    $response = Invoke-RestMethod -Uri $url -Headers @{ "Accept" = "application/vnd.github.v3+json" }
-    return $response.tag_name.TrimStart('v')
+    try {
+        $url = "https://api.github.com/repos/" + $REPO + "/releases/latest"
+        $response = Invoke-RestMethod -Uri $url -Headers @{ "Accept" = "application/vnd.github.v3+json" } -ErrorAction Stop
+        $version = $response.tag_name.TrimStart('v')
+        Write-Info ("Found release: " + $version)
+        return $version
+    }
+    catch {
+        Write-Warn "No GitHub Release found. Will fall back to building from source."
+        return $FALLBACK_VERSION
+    }
 }
 
 function Install-Dependencies {
@@ -126,24 +135,26 @@ function Install-Binary {
 
     Write-Info ("Downloading " + $BINARY + " " + $version + " from " + $downloadUrl)
 
-    $tempDir = [System.IO.Path]::GetTempPath() + "nodesec-install-" + [Guid]::NewGuid()
-    New-Item -ItemType Directory -Path $tempDir | Out-Null
-    $archivePath = Join-Path $tempDir $assetName
-
     try {
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath -UseBasicParsing
+        Invoke-WebRequest -Uri $downloadUrl -OutFile ([System.IO.Path]::GetTempPath() + "nodesec-install.zip") -UseBasicParsing -ErrorAction Stop
     }
     catch {
-        Write-Error ("Failed to download from " + $downloadUrl + ": " + $_.Exception.Message)
-        exit 1
+        Write-Warn "Binary download failed (" + $_.Exception.Message + "). Falling back to source build."
+        Install-FromSource -version $version
+        return
     }
+
+    $tempDir = [System.IO.Path]::GetTempPath() + "nodesec-install-" + [Guid]::NewGuid()
+    New-Item -ItemType Directory -Path $tempDir | Out-Null
+    $archivePath = Join-Path $tempDir "nodesec-install.zip"
 
     Expand-Archive -Path $archivePath -DestinationPath $tempDir -Force
 
     $binaryPath = Get-ChildItem -Path $tempDir -Filter $BINARY_NAME -Recurse | Select-Object -First 1
     if (-not $binaryPath) {
-        Write-Error "Binary not found in archive"
-        exit 1
+        Write-Warn "Binary not found in archive. Falling back to source build."
+        Install-FromSource -version $version
+        return
     }
 
     $installDir = Get-InstallDir
@@ -168,7 +179,13 @@ function Install-FromSource {
     $tempDir = [System.IO.Path]::GetTempPath() + "nodesec-build-" + [Guid]::NewGuid()
     New-Item -ItemType Directory -Path $tempDir | Out-Null
 
-    git clone --branch "v" + $version --depth 1 "https://github.com/" + $REPO + ".git" $tempDir
+    $cloneResult = git clone --branch "v" + $version --depth 1 "https://github.com/" + $REPO + ".git" $tempDir 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "Tag v" + $version + " not found. Falling back to main branch."
+        Remove-Item $tempDir -Recurse -Force
+        New-Item -ItemType Directory -Path $tempDir | Out-Null
+        git clone --branch main --depth 1 "https://github.com/" + $REPO + ".git" $tempDir
+    }
     Set-Location $tempDir
     cargo build --release --workspace
 
