@@ -242,7 +242,8 @@ function Install-FromSource {
 
     # Clone the repository (default branch)
     Write-Info 'Cloning repository...'
-    & git clone --depth 1 'https://github.com/' + $REPO + '.git' $tempDir 2>&1
+    $repoUrl = 'https://github.com/' + $REPO + '.git'
+    & git clone --depth 1 $repoUrl $tempDir 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Error 'Failed to clone repository. Installation aborted.'
         exit 1
