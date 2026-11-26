@@ -181,6 +181,20 @@ detect_package_manager() {
         PKG_MGR="zypper"
         INSTALL_CMD="zypper install -y"
         DEPS="pkg-config openssl-devel libudev-devel gtk3-devel webkit2gtk4-devel librsvg2-devel curl git"
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS without brew - install homebrew
+        log_info "Homebrew not found. Installing Homebrew..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        if command -v brew >/dev/null 2>&1; then
+            eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)"
+            PKG_MGR="brew"
+            INSTALL_CMD="brew install"
+            DEPS="rust git pkg-config openssl libudev gtk3 webkit2gtk librsvg"
+            log_info "Homebrew installed successfully."
+        else
+            PKG_MGR="none"
+            log_warn "Homebrew installation failed. Please install manually from https://brew.sh/"
+        fi
     else
         PKG_MGR="none"
         log_warn "No supported package manager found, skipping system dependencies"

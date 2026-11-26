@@ -216,10 +216,19 @@ function Install-Dependencies {
     }
     else {
         Write-Warn 'No package manager found (winget/choco/scoop).'
-        Write-Warn 'Please install the following manually:'
-        Write-Warn '  1. Git: https://git-scm.com/download/win'
-        Write-Warn '  2. Rust: https://rustup.rs/'
-        Write-Warn '  3. Visual Studio Build Tools: https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022'
+        Write-Info 'Installing chocolatey package manager...'
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+        if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+            Write-Error 'Chocolatey installation failed. Please install manually: https://chocolatey.org/install'
+            exit 1
+        }
+        Write-Info 'chocolatey installed. Installing required packages via choco...'
+        choco install git -y 2>&1 | Out-Null
+        choco install rustup -y 2>&1 | Out-Null
+        Write-Warn 'Visual Studio Build Tools must be installed manually from https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022'
+        Write-Success 'Dependencies check complete via chocolatey.'
     }
 }
 
