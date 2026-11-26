@@ -159,20 +159,28 @@ detect_platform() {
 detect_package_manager() {
     if command -v apt >/dev/null 2>&1; then
         PKG_MGR="apt"
-        INSTALL_CMD="apt install -y"
-        DEPS="pkg-config libssl-dev libudev-dev libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev"
+        INSTALL_CMD="apt-get install -y"
+        DEPS="build-essential pkg-config libssl-dev libudev-dev libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev curl git"
     elif command -v dnf >/dev/null 2>&1; then
         PKG_MGR="dnf"
         INSTALL_CMD="dnf install -y"
-        DEPS="pkgconfig openssl-devel libudev-devel gtk3-devel webkit2gtk4.0-devel librsvg2-devel"
+        DEPS="pkgconfig openssl-devel libudev-devel gtk3-devel webkit2gtk4.0-devel librsvg2-devel curl git"
     elif command -v pacman >/dev/null 2>&1; then
         PKG_MGR="pacman"
         INSTALL_CMD="pacman -S --needed --noconfirm"
-        DEPS="pkgconf openssl libudev gtk3 webkit2gtk librsvg"
+        DEPS="pkgconf openssl libudev gtk3 webkit2gtk librsvg curl git"
     elif command -v brew >/dev/null 2>&1; then
         PKG_MGR="brew"
         INSTALL_CMD="brew install"
-        DEPS=""
+        DEPS="rust git pkg-config openssl libudev gtk3 webkit2gtk librsvg"
+    elif command -v yum >/dev/null 2>&1; then
+        PKG_MGR="yum"
+        INSTALL_CMD="yum install -y"
+        DEPS="pkgconfig openssl-devel libudev-devel gtk3-devel webkit2gtk4.0-devel librsvg2-devel curl git"
+    elif command -v zypper >/dev/null 2>&1; then
+        PKG_MGR="zypper"
+        INSTALL_CMD="zypper install -y"
+        DEPS="pkg-config openssl-devel libudev-devel gtk3-devel webkit2gtk4-devel librsvg2-devel curl git"
     else
         PKG_MGR="none"
         log_warn "No supported package manager found, skipping system dependencies"
@@ -389,6 +397,16 @@ main() {
 
     detect_platform
     detect_package_manager
+
+    # macOS: ensure Xcode Command Line Tools are installed
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        if ! xcode-select -p &>/dev/null 2>&1; then
+            log_info "Installing Xcode Command Line Tools..."
+            xcode-select --install 2>&1 || true
+            log_warn "Please complete the Xcode Command Line Tools installation and re-run this script."
+            exit 1
+        fi
+    fi
 
     if [[ -z "${VERSION}" ]]; then
         log_info "Fetching latest version..."

@@ -139,18 +139,87 @@ function Get-LatestVersion {
 }
 
 function Install-Dependencies {
-    Write-Info 'Checking dependencies...'
+    Write-Info 'Checking and installing system dependencies...'
+
+    # Check for winget (Windows 10 1709+)
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Info 'winget found, checking for required packages...'
+        Write-Info 'winget found. Installing required packages via winget...'
+
+        # Install Git
+        $gitInstalled = Get-Command git -ErrorAction SilentlyContinue
+        if (-not $gitInstalled) {
+            Write-Info 'Installing Git via winget...'
+            winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+        }
+
+        # Install Rust
+        $rustInstalled = Get-Command cargo -ErrorAction SilentlyContinue
+        if (-not $rustInstalled) {
+            Write-Info 'Installing Rust via winget...'
+            winget install --id Rustlang.Rustup -e --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+        }
+
+        # Install Visual Studio Build Tools (MSVC linker)
+        $vsBuildToolsInstalled = Test-Path 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
+        if (-not $vsBuildToolsInstalled) {
+            Write-Info 'Installing Visual Studio Build Tools via winget...'
+            winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-package-agreements --accept-source-agreements --add 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' 2>&1 | Out-Null
+        }
+
+        Write-Success 'Dependencies check complete via winget.'
     }
     elseif (Get-Command choco -ErrorAction SilentlyContinue) {
-        Write-Info 'Chocolatey found...'
+        Write-Info 'Chocolatey found. Installing required packages via choco...'
+
+        # Install Git
+        $gitInstalled = Get-Command git -ErrorAction SilentlyContinue
+        if (-not $gitInstalled) {
+            Write-Info 'Installing Git via choco...'
+            choco install git -y 2>&1 | Out-Null
+        }
+
+        # Install Rust
+        $rustInstalled = Get-Command cargo -ErrorAction SilentlyContinue
+        if (-not $rustInstalled) {
+            Write-Info 'Installing Rust via choco...'
+            choco install rustup -y 2>&1 | Out-Null
+        }
+
+        # Install Visual Studio Build Tools
+        $vsBuildToolsInstalled = Test-Path 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
+        if (-not $vsBuildToolsInstalled) {
+            Write-Info 'Installing Visual Studio Build Tools via choco...'
+            choco install visualstudio2022buildtools -y --package-parameters '--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64' 2>&1 | Out-Null
+        }
+
+        Write-Success 'Dependencies check complete via chocolatey.'
     }
     elseif (Get-Command scoop -ErrorAction SilentlyContinue) {
-        Write-Info 'Scoop found...'
+        Write-Info 'Scoop found. Installing required packages via scoop...'
+
+        # Install Git
+        $gitInstalled = Get-Command git -ErrorAction SilentlyContinue
+        if (-not $gitInstalled) {
+            Write-Info 'Installing Git via scoop...'
+            scoop install git 2>&1 | Out-Null
+        }
+
+        # Install Rust
+        $rustInstalled = Get-Command cargo -ErrorAction SilentlyContinue
+        if (-not $rustInstalled) {
+            Write-Info 'Installing Rust via scoop...'
+            scoop install rust 2>&1 | Out-Null
+        }
+
+        Write-Warn 'Scoop does not provide Visual Studio Build Tools. Please install manually from https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022'
+        Write-Success 'Dependencies check complete via scoop.'
     }
     else {
-        Write-Warn 'No package manager found (winget/choco/scoop). Skipping system dependencies.'
+        Write-Warn 'No package manager found (winget/choco/scoop).'
+        Write-Warn 'Please install the following manually:'
+        Write-Warn '  1. Git: https://git-scm.com/download/win'
+        Write-Warn '  2. Rust: https://rustup.rs/'
+        Write-Warn '  3. Visual Studio Build Tools: https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022'
     }
 }
 
