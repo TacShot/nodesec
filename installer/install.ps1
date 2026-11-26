@@ -164,6 +164,25 @@ function Install-Dependencies {
         if (-not $vsBuildToolsInstalled) {
             Write-Info 'Installing Visual Studio Build Tools via winget...'
             winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-package-agreements --accept-source-agreements --add 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' 2>&1 | Out-Null
+
+            # Wait for VS Build Tools installation to complete (race condition handling)
+            Write-Info 'Waiting for Visual Studio Build Tools installation to complete...'
+            $maxWait = 300  # 5 minutes max
+            $elapsed = 0
+            while ($elapsed -lt $maxWait) {
+                if (Test-Path 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat') {
+                    break
+                }
+                Start-Sleep -Seconds 10
+                $elapsed += 10
+            }
+
+            if (-not (Test-Path 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat')) {
+                Write-Warn 'Visual Studio Build Tools installation may still be in progress.'
+                Write-Warn 'Please complete the Visual Studio Installer UI if it is still open.'
+                Write-Warn 'Then re-run this script.'
+                exit 1
+            }
         }
 
         Write-Success 'Dependencies check complete via winget.'
@@ -185,11 +204,31 @@ function Install-Dependencies {
             choco install rustup -y 2>&1 | Out-Null
         }
 
-        # Install Visual Studio Build Tools
-        $vsBuildToolsInstalled = Test-Path 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
+        # Install Visual Studio Build Tools (MSVC linker for cargo)
+        $vsBuildToolsPath = 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
+        $vsBuildToolsInstalled = Test-Path $vsBuildToolsPath
         if (-not $vsBuildToolsInstalled) {
             Write-Info 'Installing Visual Studio Build Tools via choco...'
             choco install visualstudio2022buildtools -y --package-parameters '--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64' 2>&1 | Out-Null
+
+            # Wait for VS Build Tools installation to complete (race condition handling)
+            Write-Info 'Waiting for Visual Studio Build Tools installation to complete...'
+            $maxWait = 300  # 5 minutes max
+            $elapsed = 0
+            while ($elapsed -lt $maxWait) {
+                if (Test-Path $vsBuildToolsPath) {
+                    break
+                }
+                Start-Sleep -Seconds 10
+                $elapsed += 10
+            }
+
+            if (-not (Test-Path $vsBuildToolsPath)) {
+                Write-Warn 'Visual Studio Build Tools installation may still be in progress.'
+                Write-Warn 'Please complete the Visual Studio Installer UI if it is still open.'
+                Write-Warn 'Then re-run this script.'
+                exit 1
+            }
         }
 
         Write-Success 'Dependencies check complete via chocolatey.'
@@ -227,7 +266,34 @@ function Install-Dependencies {
         Write-Info 'chocolatey installed. Installing required packages via choco...'
         choco install git -y 2>&1 | Out-Null
         choco install rustup -y 2>&1 | Out-Null
-        Write-Warn 'Visual Studio Build Tools must be installed manually from https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022'
+
+        # Install Visual Studio Build Tools via choco
+        $vsBuildToolsPath = 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
+        $vsBuildToolsInstalled = Test-Path $vsBuildToolsPath
+        if (-not $vsBuildToolsInstalled) {
+            Write-Info 'Installing Visual Studio Build Tools via choco...'
+            choco install visualstudio2022buildtools -y --package-parameters '--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64' 2>&1 | Out-Null
+
+            # Wait for VS Build Tools installation to complete (race condition handling)
+            Write-Info 'Waiting for Visual Studio Build Tools installation to complete...'
+            $maxWait = 300  # 5 minutes max
+            $elapsed = 0
+            while ($elapsed -lt $maxWait) {
+                if (Test-Path $vsBuildToolsPath) {
+                    break
+                }
+                Start-Sleep -Seconds 10
+                $elapsed += 10
+            }
+
+            if (-not (Test-Path $vsBuildToolsPath)) {
+                Write-Warn 'Visual Studio Build Tools installation may still be in progress.'
+                Write-Warn 'Please complete the Visual Studio Installer UI if it is still open.'
+                Write-Warn 'Then re-run this script.'
+                exit 1
+            }
+        }
+
         Write-Success 'Dependencies check complete via chocolatey.'
     }
 }
