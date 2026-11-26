@@ -141,53 +141,8 @@ function Get-LatestVersion {
 function Install-Dependencies {
     Write-Info 'Checking and installing system dependencies...'
 
-    # Check for winget (Windows 10 1709+)
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Info 'winget found. Installing required packages via winget...'
-
-        # Install Git
-        $gitInstalled = Get-Command git -ErrorAction SilentlyContinue
-        if (-not $gitInstalled) {
-            Write-Info 'Installing Git via winget...'
-            winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
-        }
-
-        # Install Rust
-        $rustInstalled = Get-Command cargo -ErrorAction SilentlyContinue
-        if (-not $rustInstalled) {
-            Write-Info 'Installing Rust via winget...'
-            winget install --id Rustlang.Rustup -e --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
-        }
-
-        # Install Visual Studio Build Tools (MSVC linker)
-        $vsBuildToolsInstalled = Test-Path 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
-        if (-not $vsBuildToolsInstalled) {
-            Write-Info 'Installing Visual Studio Build Tools via winget...'
-            winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-package-agreements --accept-source-agreements --add 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' 2>&1 | Out-Null
-
-            # Wait for VS Build Tools installation to complete (race condition handling)
-            Write-Info 'Waiting for Visual Studio Build Tools installation to complete...'
-            $maxWait = 300  # 5 minutes max
-            $elapsed = 0
-            while ($elapsed -lt $maxWait) {
-                if (Test-Path 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat') {
-                    break
-                }
-                Start-Sleep -Seconds 10
-                $elapsed += 10
-            }
-
-            if (-not (Test-Path 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat')) {
-                Write-Warn 'Visual Studio Build Tools installation may still be in progress.'
-                Write-Warn 'Please complete the Visual Studio Installer UI if it is still open.'
-                Write-Warn 'Then re-run this script.'
-                exit 1
-            }
-        }
-
-        Write-Success 'Dependencies check complete via winget.'
-    }
-    elseif (Get-Command choco -ErrorAction SilentlyContinue) {
+    # Chocolatey first on Windows — winget refuses to install Visual Studio Build Tools
+    if (Get-Command choco -ErrorAction SilentlyContinue) {
         Write-Info 'Chocolatey found. Installing required packages via choco...'
 
         # Install Git
@@ -232,6 +187,52 @@ function Install-Dependencies {
         }
 
         Write-Success 'Dependencies check complete via chocolatey.'
+    }
+    elseif (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Info 'winget found. Installing required packages via winget...'
+
+        # Install Git
+        $gitInstalled = Get-Command git -ErrorAction SilentlyContinue
+        if (-not $gitInstalled) {
+            Write-Info 'Installing Git via winget...'
+            winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+        }
+
+        # Install Rust
+        $rustInstalled = Get-Command cargo -ErrorAction SilentlyContinue
+        if (-not $rustInstalled) {
+            Write-Info 'Installing Rust via winget...'
+            winget install --id Rustlang.Rustup -e --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+        }
+
+        # Install Visual Studio Build Tools (MSVC linker) — winget often fails on VS Build Tools
+        $vsBuildToolsPath = 'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
+        $vsBuildToolsInstalled = Test-Path $vsBuildToolsPath
+        if (-not $vsBuildToolsInstalled) {
+            Write-Info 'Installing Visual Studio Build Tools via winget...'
+            winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-package-agreements --accept-source-agreements --add 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' 2>&1 | Out-Null
+
+            # Wait for VS Build Tools installation to complete (race condition handling)
+            Write-Info 'Waiting for Visual Studio Build Tools installation to complete...'
+            $maxWait = 300  # 5 minutes max
+            $elapsed = 0
+            while ($elapsed -lt $maxWait) {
+                if (Test-Path $vsBuildToolsPath) {
+                    break
+                }
+                Start-Sleep -Seconds 10
+                $elapsed += 10
+            }
+
+            if (-not (Test-Path $vsBuildToolsPath)) {
+                Write-Warn 'Visual Studio Build Tools installation may still be in progress via winget.'
+                Write-Warn 'Please complete the Visual Studio Installer UI if it is still open.'
+                Write-Warn 'Then re-run this script.'
+                exit 1
+            }
+        }
+
+        Write-Success 'Dependencies check complete via winget.'
     }
     elseif (Get-Command scoop -ErrorAction SilentlyContinue) {
         Write-Info 'Scoop found. Installing required packages via scoop...'
