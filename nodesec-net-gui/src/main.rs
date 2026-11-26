@@ -18,17 +18,20 @@ use crate::state::{FilterSettings, RootStatus};
 use nodesec_core::models::{ConnectedDevice, DeviceType};
 use crate::graph::ConnectionGraph;
 
-// Colors matching 7-color palette
-const GREEN: egui::Color32 = egui::Color32::from_rgb(0, 255, 0);
-const YELLOW: egui::Color32 = egui::Color32::from_rgb(255, 255, 0);
-const ORANGE: egui::Color32 = egui::Color32::from_rgb(255, 165, 0);
-const RED: egui::Color32 = egui::Color32::from_rgb(255, 0, 0);
-const WHITE: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
-const BLACK: egui::Color32 = egui::Color32::from_rgb(0, 0, 0);
-const GRAY: egui::Color32 = egui::Color32::from_rgb(136, 136, 136);
-const DARK_BG: egui::Color32 = egui::Color32::from_rgb(30, 30, 30);
-const PANEL_BG: egui::Color32 = egui::Color32::from_rgb(45, 45, 45);
-const BORDER: egui::Color32 = egui::Color32::from_rgb(80, 80, 80);
+// QRadar-inspired color palette
+const NAVY_BG: egui::Color32 = egui::Color32::from_rgb(15, 23, 42);      // Deep navy background
+const PANEL_BG: egui::Color32 = egui::Color32::from_rgb(30, 41, 59);     // Slate panel background
+const SIDEBAR_BG: egui::Color32 = egui::Color32::from_rgb(9, 17, 31);    // Darker sidebar
+const BORDER: egui::Color32 = egui::Color32::from_rgb(71, 85, 105);      // Slate border
+const PRIMARY: egui::Color32 = egui::Color32::from_rgb(59, 130, 246);    // Blue accent
+const PRIMARY_HOVER: egui::Color32 = egui::Color32::from_rgb(37, 99, 235); // Darker blue hover
+const WHITE: egui::Color32 = egui::Color32::from_rgb(241, 245, 249);     // Off-white text
+const GRAY: egui::Color32 = egui::Color32::from_rgb(148, 163, 184);      // Muted gray text
+const GREEN: egui::Color32 = egui::Color32::from_rgb(34, 197, 94);       // Emerald green
+const YELLOW: egui::Color32 = egui::Color32::from_rgb(234, 179, 8);      // Gold yellow
+const ORANGE: egui::Color32 = egui::Color32::from_rgb(249, 115, 22);     // Orange
+const RED: egui::Color32 = egui::Color32::from_rgb(239, 68, 68);         // Red
+const TEXT_MUTED: egui::Color32 = egui::Color32::from_rgb(100, 116, 139); // Slate muted
 
 #[derive(Clone, Copy, PartialEq)]
 enum Tab {
@@ -433,7 +436,7 @@ impl App {
                 let bg_color = if is_selected {
                     egui::Color32::from_rgb(60, 60, 60)
                 } else {
-                    DARK_BG
+                    NAVY_BG
                 };
 
                 egui::Frame::none()
@@ -1880,6 +1883,33 @@ impl App {
         }
     }
 
+    fn render_audit_details(&mut self, ui: &mut egui::Ui) {
+        let audit_state = self.monitor_state.audit_state.lock().unwrap();
+        let is_scanning = audit_state.is_scanning;
+        let scan_complete = audit_state.scan_complete;
+        drop(audit_state);
+
+        ui.heading(egui::RichText::new("Audit Details").color(PRIMARY).strong());
+        ui.separator();
+        ui.add_space(8.0);
+
+        // Scan status
+        if is_scanning {
+            ui.label(egui::RichText::new("● Audit running...").color(ORANGE).strong());
+        } else if scan_complete {
+            ui.label(egui::RichText::new("● Audit complete").color(GREEN).strong());
+        } else {
+            ui.label(egui::RichText::new("○ Audit not yet run").color(GRAY));
+        }
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        ui.label(egui::RichText::new("To run an audit, switch to the Audit tab and click [Run Audit].").color(TEXT_MUTED));
+        ui.label(egui::RichText::new("Audit results will appear here when complete.").color(TEXT_MUTED));
+    }
+
     fn render_details_pane(&mut self, ui: &mut egui::Ui) {
         ui.heading(egui::RichText::new("Details").color(ORANGE).strong());
         ui.separator();
@@ -2008,142 +2038,59 @@ impl eframe::App for App {
         // Update history data
         self.update_history();
 
-        // Apply dark theme
+        // Apply QRadar dark theme
         ctx.set_visuals(egui::Visuals {
             dark_mode: true,
             override_text_color: Some(WHITE),
-            window_fill: DARK_BG,
+            window_fill: NAVY_BG,
             panel_fill: PANEL_BG,
             window_stroke: egui::Stroke::new(1.0_f32, BORDER),
+            window_rounding: egui::Rounding::same(4.0),
             ..Default::default()
         });
 
         // Top header bar
-        egui::TopBottomPanel::top("header").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.add_space(10.0);
-                ui.label(egui::RichText::new("NODESEC NETWORK MONITOR").color(ORANGE).size(20.0).strong());
-                ui.add_space(20.0);
-
-                let monitoring = *self.monitor_state.monitoring.lock().unwrap();
-                let status = if monitoring { "LIVE" } else { "STOPPED" };
-                let status_color = if monitoring { GREEN } else { YELLOW };
-                ui.label(egui::RichText::new(status).color(status_color).size(16.0).strong());
-
-                ui.separator();
-
-                // Stats moved to dashboard
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        egui::TopBottomPanel::top("header")
+            .min_height(56.0)
+            .max_height(56.0)
+            .show(ctx, |ui| {
+                ui.set_min_height(56.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(10.0);
+                    ui.label(egui::RichText::new("NODESEC").color(PRIMARY).size(18.0).strong());
+                    ui.label(egui::RichText::new("NETWORK MONITOR").color(TEXT_MUTED).size(11.0).strong());
                     ui.add_space(20.0);
-                    let details_text = if self.show_details_pane {
-                        "[Hide Details]"
-                    } else {
-                        "[Show Details]"
-                    };
-                    if ui.button(details_text).clicked() {
-                        self.show_details_pane = !self.show_details_pane;
-                    }
+                    ui.separator();
                     ui.add_space(8.0);
 
-                    // Root privilege toggle button (macOS only)
-                    #[cfg(target_os = "macos")]
-                    {
-                        let is_root = unsafe { libc::geteuid() == 0 };
-                        let mut root_status = self.monitor_state.root_status.lock().unwrap();
-                        
-                        // Update status based on current state
-                        if *root_status == RootStatus::Unknown {
-                            *root_status = if is_root { RootStatus::On } else { RootStatus::Off };
-                        }
-                        
-                        let (root_text, root_color) = match *root_status {
-                            RootStatus::On => ("[Root: ON]".to_string(), GREEN),
-                            RootStatus::Off => ("[Root: OFF]".to_string(), RED),
-                            RootStatus::Requesting => ("[Requesting Root...]".to_string(), ORANGE),
-                            RootStatus::Unknown => ("[Root: ?]".to_string(), GRAY),
+                    let monitoring = *self.monitor_state.monitoring.lock().unwrap();
+                    let status = if monitoring { "LIVE" } else { "STOPPED" };
+                    let status_color = if monitoring { GREEN } else { RED };
+                    ui.label(egui::RichText::new(status).color(status_color).size(13.0).strong());
+                    ui.add_space(16.0);
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(20.0);
+                        let details_text = if self.show_details_pane {
+                            "Hide Details"
+                        } else {
+                            "Show Details"
                         };
-                        
-                        drop(root_status);
-                        
-                        let btn = egui::Button::new(egui::RichText::new(&root_text).color(root_color).strong());
-                        if ui.add(btn).clicked() {
-                            if is_root {
-                                // Already root
-                                let mut rs = self.monitor_state.root_status.lock().unwrap();
-                                *rs = RootStatus::On;
-                            } else {
-                                // Request root
-                                let mut rs = self.monitor_state.root_status.lock().unwrap();
-                                *rs = RootStatus::Requesting;
-                                drop(rs);
-                                ensure_root_privileges();
-                            }
+                        if ui.button(details_text).clicked() {
+                            self.show_details_pane = !self.show_details_pane;
                         }
-                    }
-                    ui.add_space(8.0);
-                    if ui.button("Quit").clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
+                        ui.add_space(16.0);
+
+                        if ui.button("Quit").clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        ui.add_space(10.0);
+                    });
                 });
             });
-        });
 
-        // Tab bar - accessible tabs with clear positions
-        egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.add_space(10.0);
-                for tab in [
-                    Tab::Dashboard, Tab::Connections, Tab::ProcessTree,
-                    Tab::ConnectionGraph, Tab::Alerts, Tab::Statistics,
-                    Tab::Audit, Tab::Reports, Tab::Devices, Tab::Settings
-                ] {
-                    let selected = self.selected_tab == tab;
-                    if ui.selectable_label(selected, tab.label()).clicked() {
-                        self.selected_tab = tab.clone();
-                        // Clear details state so each tab has its own details pane
-                        match tab {
-                            Tab::Connections => {
-                                self.details_selected_pid = None;
-                                self.details_selected_node = None;
-                                self.details_selected_node_text = None;
-                            }
-                            Tab::ProcessTree => {
-                                self.details_selected_conn = None;
-                                self.details_selected_node = None;
-                                self.details_selected_node_text = None;
-                            }
-                            Tab::ConnectionGraph => {
-                                self.details_selected_conn = None;
-                                self.details_selected_pid = None;
-                                self.details_selected_node_text = None;
-                            }
-                            Tab::Dashboard => {
-                                self.details_selected_conn = None;
-                                self.details_selected_pid = None;
-                                self.details_selected_node = None;
-                                self.details_selected_node_text = None;
-                            }
-                            _ => {
-                                self.details_selected_conn = None;
-                                self.details_selected_pid = None;
-                                self.details_selected_node = None;
-                                self.details_selected_node_text = None;
-                            }
-                        }
-                    }
-                    ui.add_space(8.0);
-                }
-            });
-        });
-
-        // Bottom status bar - app name only
-        egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.add_space(10.0);
-                ui.label(egui::RichText::new("Nodesec v1.0.0").color(GRAY));
-            });
-        });
+        // QRadar-style inline tab bar (renders inside CentralPanel below)
+        // Sidebar navigation already rendered above via SidePanel::left("sidebar")
 
         // Details pane on right side - resizable, shows details top-to-bottom per tab
         if self.show_details_pane {
@@ -2156,9 +2103,40 @@ impl eframe::App for App {
                 });
         }
 
-        // Main content area
+        // Main content area with QRadar inline tab bar
         egui::CentralPanel::default().show(ctx, |ui| {
+            // QRadar inline tab bar at top of content area
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                for tab in [
+                    Tab::Dashboard, Tab::Connections, Tab::ProcessTree,
+                    Tab::ConnectionGraph, Tab::Alerts, Tab::Statistics,
+                    Tab::Audit, Tab::Reports, Tab::Devices, Tab::Settings
+                ] {
+                    let selected = self.selected_tab == tab;
+                    let btn = egui::Button::new(
+                        egui::RichText::new(tab.label()).color(if selected { PRIMARY } else { TEXT_MUTED }).size(12.0)
+                    )
+                    .fill(if selected { PANEL_BG } else { NAVY_BG })
+                    .stroke(egui::Stroke::new(1.0, if selected { PRIMARY } else { BORDER }))
+                    .rounding(egui::Rounding::same(4.0))
+                    .min_size(egui::vec2(100.0, 30.0));
+
+                    if ui.add(btn).clicked() {
+                        self.selected_tab = tab.clone();
+                        self.details_selected_conn = None;
+                        self.details_selected_pid = None;
+                        self.details_selected_node = None;
+                        self.details_selected_node_text = None;
+                    }
+                    ui.add_space(4.0);
+                }
+            });
+
+            ui.add_space(8.0);
+
             egui::ScrollArea::both().show(ui, |ui| {
+                ui.add_space(4.0);
                 match self.selected_tab {
                 Tab::Dashboard => self.render_dashboard(ui),
                 Tab::Connections => self.render_connections(ui),
@@ -2171,10 +2149,86 @@ impl eframe::App for App {
                 Tab::Devices => self.render_devices(ui),
                 Tab::Settings => self.render_settings(ui),
             }
+            ui.add_space(20.0);
         });
     });
-}
-}
+
+        // Details pane on right side - resizable, shows details top-to-bottom per tab
+        if self.show_details_pane {
+            egui::SidePanel::right("details_pane")
+                .min_width(280.0)
+                .max_width(500.0)
+                .resizable(true)
+                .default_width(300.0)
+                .show(ctx, |ui| {
+                    ui.set_min_width(280.0);
+                    ui.heading(egui::RichText::new("DETAILS").color(PRIMARY).strong());
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    match self.selected_tab {
+                        Tab::Connections => {
+                            if let Some(ref conn) = self.details_selected_conn {
+                                let item = crate::state::ConnectionItem {
+                                    connection: conn.clone(),
+                                    threat_level: crate::state::ThreatLevel::from_score(conn.threat_score),
+                                };
+                                crate::ui::render_connection_detail_topdown(ui, &item, &self.monitor_state);
+                            } else {
+                                ui.centered_and_justified(|ui| {
+                                    ui.label(egui::RichText::new("Select a connection to view details").color(TEXT_MUTED));
+                                });
+                            }
+                        }
+                        Tab::ProcessTree => {
+                            if let Some(pid) = self.details_selected_pid {
+                                let proc = {
+                                    let connections = self.monitor_state.connections.lock().unwrap();
+                                    let processes = crate::state::ProcessTreeItem::from_connections(&connections);
+                                    processes.iter().find(|p| p.pid == pid).cloned()
+                                };
+                                if let Some(proc) = proc {
+                                    self.render_process_detail(ui, &proc);
+                                } else {
+                                    ui.centered_and_justified(|ui| {
+                                        ui.label(egui::RichText::new("Select a process to view details").color(TEXT_MUTED));
+                                    });
+                                }
+                            } else {
+                                ui.centered_and_justified(|ui| {
+                                    ui.label(egui::RichText::new("Select a process to view details").color(TEXT_MUTED));
+                                });
+                            }
+                        }
+                        Tab::ConnectionGraph => {
+                            if let Some(ref conn) = self.details_selected_conn {
+                                let item = crate::state::ConnectionItem {
+                                    connection: conn.clone(),
+                                    threat_level: crate::state::ThreatLevel::from_score(conn.threat_score),
+                                };
+                                crate::ui::render_connection_detail_topdown(ui, &item, &self.monitor_state);
+                            } else {
+                                ui.centered_and_justified(|ui| {
+                                    ui.label(egui::RichText::new("Click on a connection to view details").color(TEXT_MUTED));
+                                });
+                            }
+                        }
+                        Tab::Dashboard => {
+                            self.render_dashboard_summary(ui);
+                        }
+                        Tab::Audit => {
+                            self.render_audit_details(ui);
+                        }
+                        _ => {
+                            ui.centered_and_justified(|ui| {
+                                ui.label(egui::RichText::new("Select an item to view details").color(TEXT_MUTED));
+                            });
+                        }
+                    }
+                });
+            }
+        }
+    }
 
 pub fn run_net_gui() -> Result<(), Box<dyn std::error::Error>> {
     // Create a multi-threaded tokio runtime for async network monitoring
